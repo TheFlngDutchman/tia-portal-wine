@@ -305,3 +305,14 @@
   handle's object name (`\??\G:\...` instead of `\Device\HarddiskVolumeN\...`),
   the storage descriptor (bus type SCSI, no vendor or product strings) and the
   drive geometry (a fixed made-up geometry).
+- Licence manager window: `almgui64x.exe` wants to run without administrator
+  rights. It asks for a filtered token (`NtFilterToken` with
+  `DISABLE_MAX_PRIVILEGE`), sets its integrity level to medium and restarts
+  itself with it; Wine returned an equally elevated token and always reported
+  the high integrity level, so it restarted itself forever.
+  `patches/wine/0009-ntdll-limited-tokens-and-integrity-level.patch` hands out
+  the limited token linked to an elevated one and reports medium integrity for
+  non-elevated tokens. Result: the Automation License Manager window opens and
+  lists the drives, including the licence volume `G:`. With `G:` selected the
+  key list is empty. The launcher `almapp64x.exe` still logs one null-pointer
+  fault and two unregistered COM classes. Start it with `scripts/start-alm.sh`.

@@ -1,0 +1,66 @@
+diff --git i/dlls/ntdll/unix/security.c w/dlls/ntdll/unix/security.c
+index 1e1b4f8..d2c0943 100644
+--- i/dlls/ntdll/unix/security.c
++++ w/dlls/ntdll/unix/security.c
+@@ -620,16 +620,27 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
+ 
+     case TokenIntegrityLevel:
+         {
+-            /* report always "S-1-16-12288" (high mandatory level) for now */
++            /* "S-1-16-12288" (high mandatory level) for an elevated token,
++             * "S-1-16-8192" (medium) for a limited one */
+             static const SID high_level = {SID_REVISION, 1, {SECURITY_MANDATORY_LABEL_AUTHORITY},
+                                                             {SECURITY_MANDATORY_HIGH_RID}};
++            static const SID medium_level = {SID_REVISION, 1, {SECURITY_MANDATORY_LABEL_AUTHORITY},
++                                                              {SECURITY_MANDATORY_MEDIUM_RID}};
+ 
+             TOKEN_MANDATORY_LABEL *tml = info;
+             PSID psid = tml + 1;
++            BOOL elevated = TRUE;
++
++            SERVER_START_REQ( get_token_info )
++            {
++                req->handle = wine_server_obj_handle( token );
++                if (!wine_server_call( req )) elevated = reply->is_elevated;
++            }
++            SERVER_END_REQ;
+ 
+             tml->Label.Sid = psid;
+             tml->Label.Attributes = SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED;
+-            memcpy( psid, &high_level, sizeof(SID) );
++            memcpy( psid, elevated ? &high_level : &medium_level, sizeof(SID) );
+         }
+         break;
+ 
+@@ -856,6 +867,31 @@ NTSTATUS WINAPI NtFilterToken( HANDLE token, ULONG flags, TOKEN_GROUPS *disable_
+     SERVER_END_REQ;
+ 
+     free( sids );
++
++    /* DISABLE_MAX_PRIVILEGE and LUA_TOKEN ask for a token without administrator
++     * rights. The filter above cannot remove the elevation, so hand out the
++     * limited token that is linked to an elevated one. */
++    if (!status && (flags & (DISABLE_MAX_PRIVILEGE | LUA_TOKEN)))
++    {
++        TOKEN_ELEVATION_TYPE elevation;
++        TOKEN_LINKED_TOKEN linked;
++        TOKEN_TYPE type;
++        HANDLE limited;
++        ULONG len;
++
++        if (!NtQueryInformationToken( *new_token, TokenElevationType, &elevation, sizeof(elevation), &len ) &&
++            elevation == TokenElevationTypeFull &&
++            !NtQueryInformationToken( *new_token, TokenLinkedToken, &linked, sizeof(linked), &len ))
++        {
++            if (!NtQueryInformationToken( token, TokenType, &type, sizeof(type), &len ) && type == TokenPrimary &&
++                !NtDuplicateToken( linked.LinkedToken, 0, NULL, FALSE, TokenPrimary, &limited ))
++            {
++                NtClose( *new_token );
++                *new_token = limited;
++            }
++            NtClose( linked.LinkedToken );
++        }
++    }
+     return status;
+ }
+ 
