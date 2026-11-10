@@ -348,3 +348,24 @@
   `patches/wine/0011-mshtml-object-element-forwards-connection-points.patch`
   asks the embedded control first. The trace now shows the control's container
   being returned; the effect in the window still has to be confirmed.
+- User test of patch 0011 (first version): rows can be selected with the left
+  button, but there is still no context menu and "Upgrade" stays greyed out.
+  - Reworked 0011: the object element's own connection-point container now
+    forwards `EnumConnectionPoints` / `FindConnectionPoint` to the embedded
+    control. Trace: the licence manager calls `EnumConnectionPoints` and gets
+    `S_OK` from the control.
+  - A message trace of a synthetic right click shows the list control receiving
+    `WM_CONTEXTMENU` and querying its selection, with no popup menu following.
+  - The control asks its container for the ambient property
+    `DISPID_AMBIENT_USERMODE`; Wine's plugin host answered `E_NOTIMPL` for all
+    ambient properties. `patches/wine/0012-mshtml-plugin-host-ambient-properties.patch`
+    answers the common ones (user mode: true).
+  - State at the end of the day, NOT understood: with 0012 the licence manager
+    window looked different after a synthetic test (browser navigation buttons
+    in the toolbar, empty right pane). Whether 0012 helps, or breaks the view,
+    still has to be checked by hand. If it breaks it, drop 0012 and rebuild
+    mshtml.
+- Left for the next session: confirm the key list still renders with 0012;
+  context menu and "Upgrade"; then the upgrade itself on the test copy of the
+  licence VHD (`Lizenzen266A-wine-test.vhd`, writable, detached overnight);
+  then Portal with a V21 key; then Startdrive.

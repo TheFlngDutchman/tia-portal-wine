@@ -1,0 +1,42 @@
+diff --git i/dlls/mshtml/pluginhost.c w/dlls/mshtml/pluginhost.c
+index 69d2dd5..f8052c0 100644
+--- i/dlls/mshtml/pluginhost.c
++++ w/dlls/mshtml/pluginhost.c
+@@ -1871,8 +1871,35 @@ static HRESULT WINAPI PHDispatch_Invoke(IDispatch *iface, DISPID dispid,  REFIID
+         WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+ {
+     PluginHost *This = impl_from_IDispatch(iface);
+-    FIXME("(%p)->(%ld %x %p %p)\n", This, dispid, wFlags, pDispParams, pVarResult);
+-    return E_NOTIMPL;
++
++    TRACE("(%p)->(%ld %x %p %p)\n", This, dispid, wFlags, pDispParams, pVarResult);
++
++    /* ambient properties of the container */
++    if(!(wFlags & DISPATCH_PROPERTYGET) || !pVarResult)
++        return DISP_E_MEMBERNOTFOUND;
++
++    switch(dispid) {
++    case DISPID_AMBIENT_USERMODE:           /* running, not being designed */
++    case DISPID_AMBIENT_MESSAGEREFLECT:
++    case DISPID_AMBIENT_SUPPORTSMNEMONICS:
++        V_VT(pVarResult) = VT_BOOL;
++        V_BOOL(pVarResult) = VARIANT_TRUE;
++        return S_OK;
++    case DISPID_AMBIENT_UIDEAD:
++    case DISPID_AMBIENT_SHOWGRABHANDLES:
++    case DISPID_AMBIENT_SHOWHATCHING:
++    case DISPID_AMBIENT_DISPLAYASDEFAULT:
++        V_VT(pVarResult) = VT_BOOL;
++        V_BOOL(pVarResult) = VARIANT_FALSE;
++        return S_OK;
++    case DISPID_AMBIENT_LOCALEID:
++        V_VT(pVarResult) = VT_I4;
++        V_I4(pVarResult) = GetUserDefaultLCID();
++        return S_OK;
++    default:
++        FIXME("(%p) unsupported ambient property %ld\n", This, dispid);
++        return DISP_E_MEMBERNOTFOUND;
++    }
+ }
+ 
+ static const IDispatchVtbl DispatchVtbl = {
