@@ -162,3 +162,12 @@
     `tests/culture-lcid`: 2 of 108 fail before, 0 after.
   - Portal's crash-report window (`Siemens.Automation.Diagnostics.Report.exe`)
     is not readable under Wine (user observation); not looked into.
+- With patches 0001-0005 (user test): creating a new project works. Opening an
+  existing V21 project gets as far as Portal's product check: its GSD file is
+  installed, and the "Open project" dialog lists the products the project
+  uses, with SINAMICS Startdrive (V21 HF2) marked "Installation required"; it
+  is not part of the STEP 7 + Safety + WinCC bundle that was installed.
+  - Shortly after that dialog, Portal goes to its crash handler with
+    `TiaPersistenceOpenFailedWithProductInfoException: Required project
+    elements are missing`. Whether Portal on Windows survives this case is not
+    known here; under Wine it ends the session.
