@@ -200,3 +200,11 @@
     `ALMPANELPLUGIN` COM server (see above).
   - The licence manager GUI (`almapp64x.exe`) crashes at start with a call
     through a null pointer; not looked into.
+- Second start with the databases in place: the licence manager service is
+  RUNNING again, together with Portal. Portal sitting at its start screen makes
+  no Diffie-Hellman calls, so the cipher used on the link to the licence
+  manager is still unknown; it will show up once something asks for a licence.
+- Licence storage: the user's licence keys are on a 50 MB VHD (NTFS volume with
+  an `AX NF ZZ` folder). Attached read-only with `udisksctl loop-setup -r`.
+  Wine did not map it to a drive letter by itself. Not yet presented to the
+  licence manager.
