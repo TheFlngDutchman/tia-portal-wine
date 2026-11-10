@@ -3,7 +3,7 @@
  * Manager service uses it: ephemeral key with caller-supplied P and G.
  *
  * Build: x86_64-w64-mingw32-gcc -O2 -o capi_dh.exe capi_dh.c -ladvapi32
- * Run:   wine capi_dh.exe [session algorithm, hex ALG_ID, default 6801 = RC4]
+ * Run:   wine capi_dh.exe [session algorithm, hex ALG_ID, default 660c = CALG_CYLINK_MEK]
  */
 #include <windows.h>
 #include <wincrypt.h>
@@ -41,7 +41,7 @@ static BOOL make_party( HCRYPTPROV prov, const BYTE *p, const BYTE *g, HCRYPTKEY
 
 int main( int argc, char **argv )
 {
-    ALG_ID alg = argc > 1 ? strtoul( argv[1], NULL, 16 ) : CALG_RC4;
+    ALG_ID alg = argc > 1 ? strtoul( argv[1], NULL, 16 ) : CALG_CYLINK_MEK;
     HCRYPTPROV prov;
     HCRYPTKEY key_a, key_b, agreed_a, agreed_b;
     BYTE p[BYTES], g[BYTES] = { 2 }, blob_a[256], blob_b[256];

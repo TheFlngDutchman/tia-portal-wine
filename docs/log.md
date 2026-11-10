@@ -208,3 +208,17 @@
   an `AX NF ZZ` folder). Attached read-only with `udisksctl loop-setup -r`.
   Wine did not map it to a drive letter by itself. Not yet presented to the
   licence manager.
+- Adding a PLC in Portal makes its licence client talk to the licence manager:
+  both sides do the Diffie-Hellman exchange, the service converts the agreed
+  key with `KP_ALGID = CALG_CYLINK_MEK` (0x660c, DES with 40 key bits) and
+  calls `CryptEncrypt`. With the first-stage patch that call failed, the
+  request failed, and Portal exited on an unhandled breakpoint exception
+  (0x80000003).
+- `dssenh`, second stage (same patch file 0006): agreed keys can be converted
+  to `CALG_CYLINK_MEK` or `CALG_DES`; `CPEncrypt` / `CPDecrypt` do DES-CBC with
+  PKCS#5 padding; `CPGetKeyParam` answers the basic parameters.
+  `tests/capi-dh` passes for both algorithms (A encrypts, B decrypts).
+  - Caveat: which bytes of the DH secret Windows uses for the session key is
+    undocumented and was not checked against Windows. The implementation is
+    consistent with itself, so two Wine processes can talk to each other; it
+    is not known to interoperate with a licence manager running on Windows.

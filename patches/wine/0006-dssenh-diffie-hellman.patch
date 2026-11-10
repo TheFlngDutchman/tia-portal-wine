@@ -24,10 +24,10 @@ index fb83aed..eea2a50 100644
  @ stdcall CPGetUserKey(ptr long ptr)
  @ stdcall CPHashData(ptr ptr ptr long long)
 diff --git i/dlls/dssenh/main.c w/dlls/dssenh/main.c
-index 5634168..fbd3065 100644
+index 5634168..d54f3c8 100644
 --- i/dlls/dssenh/main.c
 +++ w/dlls/dssenh/main.c
-@@ -45,8 +45,21 @@ struct key
+@@ -45,8 +45,25 @@ struct key
      DWORD             bitlen;
      SYMCRYPT_DLGROUP *group;
      SYMCRYPT_DLKEY   *handle;
@@ -37,6 +37,10 @@ index 5634168..fbd3065 100644
 +    BYTE             *secret;       /* agreed secret, little endian */
 +    DWORD             secret_len;
 +    ALG_ID            session_alg;  /* algorithm an agreed key was converted to */
++    BOOL              have_cipher;
++    SYMCRYPT_DES_EXPANDED_KEY des;
++    BYTE              iv[8];
++    BYTE              chain[8];     /* CBC chaining value of the running operation */
  };
  
 +#define MAGIC_DH1 ('\0' | ('D' << 8) | ('H' << 16) | ('1' << 24))
@@ -49,7 +53,7 @@ index 5634168..fbd3065 100644
  #define MAGIC_CONTAINER (('C' << 24) | ('O' << 16) | ('N' << 8) | 'T')
  struct container
  {
-@@ -207,6 +220,8 @@ static struct key *create_key( ALG_ID algid, DWORD bitlen, DWORD flags )
+@@ -207,6 +224,8 @@ static struct key *create_key( ALG_ID algid, DWORD bitlen, DWORD flags )
      {
      case CALG_DSS_SIGN:
      case CALG_DH_SF:
@@ -58,7 +62,7 @@ index 5634168..fbd3065 100644
          break;
  
      default:
-@@ -229,6 +244,13 @@ static void destroy_key( struct key *key )
+@@ -229,6 +248,13 @@ static void destroy_key( struct key *key )
      if (!key) return;
      if (key->handle) SymCryptDlkeyFree( key->handle );
      if (key->group) SymCryptDlgroupFree( key->group );
@@ -72,7 +76,7 @@ index 5634168..fbd3065 100644
      /* Ensure compiler doesn't optimize out the assignment with 0. */
      SecureZeroMemory( &key->magic, sizeof(key->magic) );
      free( key );
-@@ -708,6 +730,139 @@ error:
+@@ -708,6 +734,139 @@ error:
      return FALSE;
  }
  
@@ -212,7 +216,7 @@ index 5634168..fbd3065 100644
  BOOL WINAPI CPGenKey( HCRYPTPROV hprov, ALG_ID algid, DWORD flags, HCRYPTKEY *ret_key )
  {
      static const unsigned int supported_key_lengths[] = { 512, 768, 1024 };
-@@ -732,6 +887,9 @@ BOOL WINAPI CPGenKey( HCRYPTPROV hprov, ALG_ID algid, DWORD flags, HCRYPTKEY *re
+@@ -732,6 +891,9 @@ BOOL WINAPI CPGenKey( HCRYPTPROV hprov, ALG_ID algid, DWORD flags, HCRYPTKEY *re
          return FALSE;
      }
  
@@ -222,7 +226,7 @@ index 5634168..fbd3065 100644
      return generate_key( container, algid, bitlen, LOWORD(flags), ret_key );
  }
  
-@@ -815,6 +973,9 @@ BOOL WINAPI CPImportKey( HCRYPTPROV hprov, const BYTE *data, DWORD len, HCRYPTKE
+@@ -815,6 +977,9 @@ BOOL WINAPI CPImportKey( HCRYPTPROV hprov, const BYTE *data, DWORD len, HCRYPTKE
      }
  
      hdr = (const BLOBHEADER *)data;
@@ -232,7 +236,7 @@ index 5634168..fbd3065 100644
      if ((hdr->bType != PRIVATEKEYBLOB && hdr->bType != PUBLICKEYBLOB) || hdr->aiKeyAlg != CALG_DSS_SIGN)
      {
          FIXME( "bType %u aiKeyAlg %08x not supported\n", hdr->bType, hdr->aiKeyAlg );
-@@ -858,6 +1019,17 @@ BOOL WINAPI CPExportKey( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTKEY hexpkey, DW
+@@ -858,6 +1023,17 @@ BOOL WINAPI CPExportKey( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTKEY hexpkey, DW
          return FALSE;
      }
  
@@ -250,12 +254,51 @@ index 5634168..fbd3065 100644
      return export_key( key, type, data, *len, len );
  }
  
-@@ -913,8 +1085,94 @@ BOOL WINAPI CPGetUserKey( HCRYPTPROV hprov, DWORD keyspec, HCRYPTKEY *ret_key )
+@@ -911,11 +1087,277 @@ BOOL WINAPI CPGetUserKey( HCRYPTPROV hprov, DWORD keyspec, HCRYPTKEY *ret_key )
+     return ret;
+ }
  
++/* Turn the agreed Diffie-Hellman secret into a session key.
++ *
++ * NOTE: which bytes of the secret Windows uses is not documented and was not
++ * verified. Both ends of a link must therefore use this implementation: it is
++ * consistent with itself, but not known to interoperate with Windows. */
++static BOOL convert_agreed_key( struct key *key, ALG_ID algid )
++{
++    BYTE des_key[8] = {0};
++
++    switch (algid)
++    {
++    case CALG_CYLINK_MEK:   /* DES with 40 key bits; the remaining key bits are zero */
++        memcpy( des_key, key->secret, 5 );
++        break;
++    case CALG_DES:
++        memcpy( des_key, key->secret, 8 );
++        break;
++    default:
++        FIXME( "conversion to algorithm %08x not supported\n", algid );
++        SetLastError( NTE_BAD_ALGID );
++        return FALSE;
++    }
++
++    if (SymCryptDesExpandKey( &key->des, des_key, sizeof(des_key) ))
++    {
++        SetLastError( NTE_FAIL );
++        return FALSE;
++    }
++    SecureZeroMemory( des_key, sizeof(des_key) );
++    memset( key->iv, 0, sizeof(key->iv) );
++    memset( key->chain, 0, sizeof(key->chain) );
++    key->session_alg = algid;
++    key->have_cipher = TRUE;
++    return TRUE;
++}
++
  BOOL WINAPI CPSetKeyParam( HCRYPTPROV hprov, HCRYPTKEY hkey, DWORD param, BYTE *data, DWORD flags )
  {
 -    FIXME( "%IX, %IX, %lu, %p, %08lx\n", hprov, hkey, param, data, flags );
 -    SetLastError( ERROR_INVALID_PARAMETER );
+-    return FALSE;
 +    struct key *key = (struct key *)hkey;
 +
 +    TRACE( "%IX, %IX, %lu, %p, %08lx\n", hprov, hkey, param, data, flags );
@@ -308,9 +351,34 @@ index 5634168..fbd3065 100644
 +            SetLastError( NTE_BAD_KEY );
 +            return FALSE;
 +        }
-+        key->session_alg = *(const ALG_ID *)data;
-+        FIXME( "agreed key converted to algorithm %08x: encryption with it is not implemented\n",
-+               key->session_alg );
++        return convert_agreed_key( key, *(const ALG_ID *)data );
++
++    case KP_IV:
++        if (!key->have_cipher || !data)
++        {
++            SetLastError( NTE_BAD_KEY );
++            return FALSE;
++        }
++        memcpy( key->iv, data, sizeof(key->iv) );
++        memcpy( key->chain, data, sizeof(key->chain) );
++        return TRUE;
++
++    case KP_MODE:
++        if (!data || *(const DWORD *)data != CRYPT_MODE_CBC)
++        {
++            FIXME( "cipher mode %lu not supported\n", data ? *(const DWORD *)data : 0 );
++            SetLastError( NTE_BAD_DATA );
++            return FALSE;
++        }
++        return TRUE;
++
++    case KP_PADDING:
++        if (!data || *(const DWORD *)data != PKCS5_PADDING)
++        {
++            FIXME( "padding %lu not supported\n", data ? *(const DWORD *)data : 0 );
++            SetLastError( NTE_BAD_DATA );
++            return FALSE;
++        }
 +        return TRUE;
 +
 +    default:
@@ -322,28 +390,148 @@ index 5634168..fbd3065 100644
 +
 +BOOL WINAPI CPGetKeyParam( HCRYPTPROV hprov, HCRYPTKEY hkey, DWORD param, BYTE *data, DWORD *len, DWORD flags )
 +{
-+    FIXME( "%IX, %IX, %lu, %p, %p, %08lx: stub\n", hprov, hkey, param, data, len, flags );
-+    SetLastError( NTE_BAD_TYPE );
-+    return FALSE;
++    struct key *key = (struct key *)hkey;
++    const BYTE *src;
++    DWORD value, size = sizeof(value);
++
++    TRACE( "%IX, %IX, %lu, %p, %p, %08lx\n", hprov, hkey, param, data, len, flags );
++
++    if (!key || key->magic != MAGIC_KEY || !len)
++    {
++        SetLastError( NTE_BAD_KEY );
++        return FALSE;
++    }
++
++    src = (const BYTE *)&value;
++    switch (param)
++    {
++    case KP_ALGID:
++        value = key->have_cipher ? key->session_alg : key->algid;
++        break;
++    case KP_KEYLEN:
++        if (!key->have_cipher) value = key->bitlen;
++        else value = (key->session_alg == CALG_CYLINK_MEK) ? 40 : 56;
++        break;
++    case KP_BLOCKLEN:
++        value = key->have_cipher ? 64 : key->bitlen;
++        break;
++    case KP_MODE:
++        value = CRYPT_MODE_CBC;
++        break;
++    case KP_PADDING:
++        value = PKCS5_PADDING;
++        break;
++    case KP_IV:
++        if (!key->have_cipher)
++        {
++            SetLastError( NTE_BAD_KEY );
++            return FALSE;
++        }
++        src = key->iv;
++        size = sizeof(key->iv);
++        break;
++    default:
++        FIXME( "%IX, %IX, %lu, %p, %p, %08lx: unsupported parameter\n", hprov, hkey, param, data, len, flags );
++        SetLastError( NTE_BAD_TYPE );
++        return FALSE;
++    }
++
++    if (data && *len < size)
++    {
++        *len = size;
++        SetLastError( ERROR_MORE_DATA );
++        return FALSE;
++    }
++    if (data) memcpy( data, src, size );
++    *len = size;
++    return TRUE;
 +}
 +
++/* CBC with PKCS#5 padding, which is what CryptoAPI uses for block ciphers by default. */
 +BOOL WINAPI CPEncrypt( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTHASH hhash, BOOL final, DWORD flags, BYTE *data,
 +                       DWORD *len, DWORD buflen )
 +{
 +    struct key *key = (struct key *)hkey;
-+    FIXME( "%IX, %IX, %IX, %d, %08lx, %p, %p (%lu), %lu: stub, key alg %08x session alg %08x\n", hprov, hkey, hhash,
-+           final, flags, data, len, len ? *len : 0, buflen, key ? key->algid : 0, key ? key->session_alg : 0 );
-+    SetLastError( NTE_BAD_KEY );
-+    return FALSE;
++    DWORD in_len, out_len, pad;
++
++    TRACE( "%IX, %IX, %IX, %d, %08lx, %p, %p, %lu\n", hprov, hkey, hhash, final, flags, data, len, buflen );
++
++    if (!key || key->magic != MAGIC_KEY || !key->have_cipher || !len)
++    {
++        SetLastError( NTE_BAD_KEY );
++        return FALSE;
++    }
++    if (hhash) FIXME( "hashing the plaintext is not supported\n" );
++
++    in_len = *len;
++    if (final) out_len = (in_len / 8 + 1) * 8;
++    else if (in_len % 8)
++    {
++        SetLastError( NTE_BAD_LEN );
++        return FALSE;
++    }
++    else out_len = in_len;
++
++    if (!data)
++    {
++        *len = out_len;
++        return TRUE;
++    }
++    if (buflen < out_len)
++    {
++        *len = out_len;
++        SetLastError( ERROR_MORE_DATA );
++        return FALSE;
++    }
++
++    pad = out_len - in_len;
++    if (pad) memset( data + in_len, pad, pad );
++    SymCryptCbcEncrypt( SymCryptDesBlockCipher, &key->des, key->chain, data, data, out_len );
++    if (final) memcpy( key->chain, key->iv, sizeof(key->chain) );
++    *len = out_len;
++    return TRUE;
 +}
 +
 +BOOL WINAPI CPDecrypt( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTHASH hhash, BOOL final, DWORD flags, BYTE *data,
 +                       DWORD *len )
 +{
 +    struct key *key = (struct key *)hkey;
-+    FIXME( "%IX, %IX, %IX, %d, %08lx, %p, %p (%lu): stub, key alg %08x session alg %08x\n", hprov, hkey, hhash,
-+           final, flags, data, len, len ? *len : 0, key ? key->algid : 0, key ? key->session_alg : 0 );
-+    SetLastError( NTE_BAD_KEY );
-     return FALSE;
++    DWORD i, pad;
++
++    TRACE( "%IX, %IX, %IX, %d, %08lx, %p, %p\n", hprov, hkey, hhash, final, flags, data, len );
++
++    if (!key || key->magic != MAGIC_KEY || !key->have_cipher || !len || !data)
++    {
++        SetLastError( NTE_BAD_KEY );
++        return FALSE;
++    }
++    if (hhash) FIXME( "hashing the plaintext is not supported\n" );
++    if (!*len || *len % 8)
++    {
++        SetLastError( NTE_BAD_DATA );
++        return FALSE;
++    }
++
++    SymCryptCbcDecrypt( SymCryptDesBlockCipher, &key->des, key->chain, data, data, *len );
++    if (!final) return TRUE;
++
++    memcpy( key->chain, key->iv, sizeof(key->chain) );
++    pad = data[*len - 1];
++    if (!pad || pad > 8)
++    {
++        SetLastError( NTE_BAD_DATA );
++        return FALSE;
++    }
++    for (i = 0; i < pad; i++)
++    {
++        if (data[*len - 1 - i] != pad)
++        {
++            SetLastError( NTE_BAD_DATA );
++            return FALSE;
++        }
++    }
++    *len -= pad;
++    return TRUE;
  }
  
+ BOOL WINAPI CPGenRandom( HCRYPTPROV hprov, DWORD len, BYTE *buffer )
