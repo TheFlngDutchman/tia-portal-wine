@@ -15,7 +15,8 @@ mkdir -p "$build" && cd "$build"
 [ -f Makefile ] || "$src/configure" --enable-archs=i386,x86_64 --disable-tests
 make -j"$(nproc)" dlls/wbemprox/x86_64-windows/wbemprox.dll dlls/wbemprox/i386-windows/wbemprox.dll \
   dlls/wminet_utils/x86_64-windows/wminet_utils.dll dlls/wminet_utils/i386-windows/wminet_utils.dll \
-  dlls/kernelbase/x86_64-windows/kernelbase.dll dlls/kernelbase/i386-windows/kernelbase.dll
+  dlls/kernelbase/x86_64-windows/kernelbase.dll dlls/kernelbase/i386-windows/kernelbase.dll \
+  dlls/ncrypt/x86_64-windows/ncrypt.dll dlls/ncrypt/i386-windows/ncrypt.dll
 # Wine always loads its own builtin wbemprox from the Wine installation, even
 # if the copy in the prefix is replaced. So the patched build is installed as a
 # "native" DLL: the builtin marker in the DOS header is cleared and a DLL
@@ -33,6 +34,10 @@ wine reg add 'HKCU\Software\Wine\DllOverrides' /v wbemprox /d native,builtin /f 
 install_native dlls/kernelbase/x86_64-windows/kernelbase.dll "$win/system32/kernelbase.dll"
 install_native dlls/kernelbase/i386-windows/kernelbase.dll "$win/syswow64/kernelbase.dll"
 wine reg add 'HKCU\Software\Wine\DllOverrides' /v kernelbase /d native,builtin /f >/dev/null
+# ncrypt: ECDH keys, secret agreement and key derivation (patch 0004).
+install_native dlls/ncrypt/x86_64-windows/ncrypt.dll "$win/system32/ncrypt.dll"
+install_native dlls/ncrypt/i386-windows/ncrypt.dll "$win/syswow64/ncrypt.dll"
+wine reg add 'HKCU\Software\Wine\DllOverrides' /v ncrypt /d native,builtin /f >/dev/null
 # .NET 4.8 ships its own WMINet_Utils.dll, which wraps WMI objects and relies on
 # a proxy/stub for IWbemServices that Wine does not have. Wine's wminet_utils
 # passes the objects through unwrapped; the patched build (which adds functions
@@ -46,4 +51,4 @@ for pair in "x86_64 Framework64" "i386 Framework"; do
 done
 wine reg add 'HKCU\Software\Wine\DllOverrides' /v wminet_utils /d native,builtin /f >/dev/null
 wineserver -k || true
-echo "patched wbemprox, wminet_utils and kernelbase installed into $WINEPREFIX"
+echo "patched wbemprox, wminet_utils, kernelbase and ncrypt installed into $WINEPREFIX"

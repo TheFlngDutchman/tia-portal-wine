@@ -142,3 +142,11 @@
 - Debugging note: attaching `winedbg` with `bt all` causes "page fault on
   execute access to FFBB11B0" lines in other processes; those are an artefact of
   the debugger, not of the application.
+- ECDH in `ncrypt`: `patches/wine/0004-ncrypt-ecdh.patch` adds ECDH P-256/P-384/
+  P-521 keys (create, finalize, import, export), `NCryptSecretAgreement` and
+  `NCryptDeriveKey`, all forwarding to Wine's `bcrypt`. Test
+  `tests/ecdh-cng` (two `ECDiffieHellmanCng` parties, SHA-512 hash KDF, as the
+  storage helper uses it): all four cases failed with `NTE_NOT_SUPPORTED`
+  before the patch and pass after it. Both parties run under Wine, so this
+  shows the calls work and agree with each other, not that the derived bytes
+  match Windows.
