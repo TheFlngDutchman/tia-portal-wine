@@ -22,3 +22,20 @@
     `InstData/Resources/CRC.txt` match their SHA-256 values, and the catalog is
     signed by "Siemens AG" (DigiCert code-signing chain).
   - The dialog offers to continue. A proper fix belongs in Wine's `wintrust`.
+- Second installer run, continuing past the validation dialog: `SIA2.exe` (the
+  .NET setup engine, 32-bit) crashes during "START OS analyse" with
+  `System.InvalidCastException` in
+  `System.Management.SecuredIWbemServicesHandler.ExecQuery_`, called from
+  `OsVersion.GetVistaSku()`.
+  - Reproduced without Siemens code in `tests/wmi-sta`: on an STA thread the
+    first WMI query works and every later one fails; on an MTA thread all work.
+  - Cause: from an STA thread, System.Management opens the WMI connection on a
+    worker thread in the multithreaded apartment and then uses the object from
+    the STA thread. .NET asks the object for `IMarshal` and `IAgileObject`;
+    Wine's `wbemprox` answers "not implemented" for both, so .NET tries to
+    marshal `IWbemServices` between apartments, and Wine has no proxy/stub for
+    it. On Windows these objects are free-threaded.
+  - Proposed fix: `patches/wine/0001-wbemprox-mark-objects-agile.patch` makes the
+    wbemprox locator, services, enumerator and class objects answer
+    `IAgileObject`. `scripts/build-wbemprox.sh` builds it. **Not built or tested
+    yet.**

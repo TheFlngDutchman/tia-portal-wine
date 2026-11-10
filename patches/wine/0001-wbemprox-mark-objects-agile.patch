@@ -1,0 +1,44 @@
+diff --git i/dlls/wbemprox/class.c w/dlls/wbemprox/class.c
+index b1e5794..8687a0c 100644
+--- i/dlls/wbemprox/class.c
++++ w/dlls/wbemprox/class.c
+@@ -76,6 +76,7 @@ static HRESULT WINAPI enum_class_object_QueryInterface(
+     TRACE("%p, %s, %p\n", ec, debugstr_guid( riid ), ppvObject );
+ 
+     if ( IsEqualGUID( riid, &IID_IEnumWbemClassObject ) ||
++         IsEqualGUID( riid, &IID_IAgileObject ) ||
+          IsEqualGUID( riid, &IID_IUnknown ) )
+     {
+         *ppvObject = &ec->IEnumWbemClassObject_iface;
+@@ -323,6 +324,7 @@ static HRESULT WINAPI class_object_QueryInterface(
+     TRACE("%p, %s, %p\n", co, debugstr_guid( riid ), ppvObject );
+ 
+     if ( IsEqualGUID( riid, &IID_IWbemClassObject ) ||
++         IsEqualGUID( riid, &IID_IAgileObject ) ||
+          IsEqualGUID( riid, &IID_IUnknown ) )
+     {
+         *ppvObject = &co->IWbemClassObject_iface;
+diff --git i/dlls/wbemprox/services.c w/dlls/wbemprox/services.c
+index 7ca8979..65eb6a0 100644
+--- i/dlls/wbemprox/services.c
++++ w/dlls/wbemprox/services.c
+@@ -262,6 +262,7 @@ static HRESULT WINAPI wbem_services_QueryInterface(
+     TRACE("%p %s %p\n", ws, debugstr_guid( riid ), ppvObject );
+ 
+     if ( IsEqualGUID( riid, &IID_IWbemServices ) ||
++         IsEqualGUID( riid, &IID_IAgileObject ) ||
+          IsEqualGUID( riid, &IID_IUnknown ) )
+     {
+         *ppvObject = &ws->IWbemServices_iface;
+diff --git i/dlls/wbemprox/wbemlocator.c w/dlls/wbemprox/wbemlocator.c
+index 6e5bdde..0cb6e8c 100644
+--- i/dlls/wbemprox/wbemlocator.c
++++ w/dlls/wbemprox/wbemlocator.c
+@@ -71,6 +71,7 @@ static HRESULT WINAPI wbem_locator_QueryInterface(
+     TRACE("%p %s %p\n", This, debugstr_guid( riid ), ppvObject );
+ 
+     if ( IsEqualGUID( riid, &IID_IWbemLocator ) ||
++         IsEqualGUID( riid, &IID_IAgileObject ) ||
+          IsEqualGUID( riid, &IID_IUnknown ) )
+     {
+         *ppvObject = iface;
