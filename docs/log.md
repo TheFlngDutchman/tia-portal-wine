@@ -222,3 +222,30 @@
     undocumented and was not checked against Windows. The implementation is
     consistent with itself, so two Wine processes can talk to each other; it
     is not known to interoperate with a licence manager running on Windows.
+- With the second-stage `dssenh` patch, Portal and the licence manager complete
+  their exchanges (all decrypts succeed) and Portal shows "No valid License Key
+  was found" with the trial-licence offer. That is the expected answer from a
+  licence manager without keys.
+- Licence volume mapped as `G:` (read-only): the licence manager finds the
+  `AX NF ZZ` folder and reads the key files, but still reports no valid key.
+  What it asks about the volume and the key files, and what Wine 11.20 answers:
+
+  | Query | Wine's answer |
+  |-------|---------------|
+  | volume serial number | `4700-0000` instead of the NTFS serial; Wine's mountmgr does not read NTFS boot sectors |
+  | `FSCTL_GET_OBJECT_ID` per key file (68 calls) | an ID made up from the Linux device and inode numbers, not the file's NTFS object ID |
+  | `FSCTL_GET_RETRIEVAL_POINTERS` per key file (21 calls) | the on-disk location of the file; not checked what Wine returns |
+  | `IOCTL_STORAGE_QUERY_PROPERTY`, `IOCTL_DISK_GET_DRIVE_GEOMETRY` | not checked |
+
+  So the keys appear to be tied to properties of the volume and of the files on
+  it, and under Wine those properties come out different from Windows. Giving
+  the user read access to the block device did not change the reported serial
+  (reverted).
+  - A faithful fix would make Wine report the real values of the mounted NTFS
+    volume. `NtFsControlFile` lives in Wine's Unix-side `ntdll.so`, which cannot
+    be swapped in per prefix like the DLL patches so far; it needs a custom
+    Wine build. Inventing values that satisfy the check is out of scope for
+    this project.
+- Earlier note corrected: the `c00000cb` results for `\??\G:` are not a
+  permission problem; every drive letter shows them, it is how Wine routes
+  volume opens.
