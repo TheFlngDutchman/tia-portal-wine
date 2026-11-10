@@ -150,3 +150,15 @@
   before the patch and pass after it. Both parties run under Wine, so this
   shows the calls work and agree with each other, not that the derived bytes
   match Windows.
+- With the ECDH patch the storage helper (`FileStorage.Server.exe`) starts and
+  stays up. Creating a project then crashes Portal with
+  `CultureNotFoundException: 3098 (0x0c1a) is an invalid culture identifier`
+  in `PlatformUtilities.GetAvailableCultures`. Portal resolves each of the 108
+  locale IDs in its `Installation/AvailableCultures` setting; Wine's locale
+  data lacks two of them, 0x081a (sr-Latn-CS) and 0x0c1a (sr-Cyrl-CS), the
+  locales of the former Serbia and Montenegro.
+  - Fix: `patches/wine/0005-kernelbase-former-serbia-montenegro-lcids.patch`
+    maps them to sr-Latn-RS / sr-Cyrl-RS in `LCIDToLocaleName`. Test in
+    `tests/culture-lcid`: 2 of 108 fail before, 0 after.
+  - Portal's crash-report window (`Siemens.Automation.Diagnostics.Report.exe`)
+    is not readable under Wine (user observation); not looked into.

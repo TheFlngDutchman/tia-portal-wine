@@ -1,0 +1,2 @@
+using System; using System.Globalization; using System.IO;
+static class L { static int Main(string[] a) { int bad=0,n=0; foreach (var s in File.ReadAllText(a[0]).Split(new[]{' ','\n','\r'},StringSplitOptions.RemoveEmptyEntries)) { n++; int id=int.Parse(s); try { CultureInfo.GetCultureInfo(id); } catch (CultureNotFoundException) { bad++; Console.WriteLine("FAIL: 0x"+id.ToString("x4")+" ("+id+")"); } } Console.WriteLine("checked "+n+", failed "+bad); return bad; } }
