@@ -1,0 +1,11 @@
+# Never commit Siemens files, registry data, prefixes or logs.
+/private/
+/prefix/
+/logs/
+*.exe
+*.dll
+*.sys
+*.msi
+*.iso
+*.reg
+*.img
