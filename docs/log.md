@@ -284,3 +284,24 @@
     user has read access to the block device) the same volume serial number as
     the NTFS boot sector.
   - The licence manager service starts under the custom build.
+- With real serial number and file locations, Portal still reports no valid
+  licence key. Per key file the licence manager reads the file, asks for its
+  retrieval pointers, then `FileAllInformation`, the handle's object name, and
+  `IOCTL_STORAGE_QUERY_PROPERTY` on the volume. Comparing Wine's answers with
+  the NTFS file record (`tests/retrieval-pointers/fileinfo.c` against
+  `tools/ntfs_probe.py`) showed three more differences in what Wine says about
+  the file itself:
+
+  | | Wine 11.20 | NTFS file record |
+  |---|---|---|
+  | file index | inode number only | record number plus sequence number in the top 16 bits |
+  | attributes | `ARCHIVE` | `ARCHIVE`, `HIDDEN`, `SYSTEM` |
+  | creation time | same as modification time | its own, earlier value |
+
+  Patch 0008 (renamed `0008-ntdll-report-ntfs-file-location-and-metadata.patch`)
+  now also reads the file record from the volume's block device and reports
+  those three values. Verified for a key file; a file on ext4 is unchanged.
+- Still different from Windows, and not about the volume's contents: the
+  handle's object name (`\??\G:\...` instead of `\Device\HarddiskVolumeN\...`),
+  the storage descriptor (bus type SCSI, no vendor or product strings) and the
+  drive geometry (a fixed made-up geometry).

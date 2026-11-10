@@ -1,0 +1,387 @@
+diff --git i/dlls/ntdll/unix/file.c w/dlls/ntdll/unix/file.c
+index 8b87cc8..b14116a 100644
+--- i/dlls/ntdll/unix/file.c
++++ w/dlls/ntdll/unix/file.c
+@@ -96,6 +96,10 @@
+ #ifdef HAVE_SYS_STATFS_H
+ #include <sys/statfs.h>
+ #endif
++#ifdef __linux__
++# include <linux/fs.h>
++# include <linux/fiemap.h>
++#endif
+ #ifdef HAVE_SYS_XATTR_H
+ #include <sys/xattr.h>
+ #endif
+@@ -1327,6 +1331,183 @@ static BOOL append_entry( struct dir_data *data, const char *long_name,
+ 
+ 
+ /* fetch the attributes of a file */
++#ifdef __linux__
++/* What an NTFS volume itself records about a file: the sequence number of its
++ * file record, its creation time and its attribute flags. The kernel's ntfs3
++ * driver uses the MFT record number as inode number but does not expose the
++ * sequence number, so the record is read from the volume's block device.
++ * Needs read access to that device; without it nothing changes. */
++struct ntfs_volume
++{
++    dev_t        dev;
++    int          fd;        /* -1: not NTFS, or the device cannot be read */
++    unsigned int sector, cluster, record;
++    unsigned int nb_runs;
++    struct { ULONGLONG lcn, len; } runs[32];    /* extents of $MFT */
++};
++
++struct ntfs_file_facts
++{
++    ULONGLONG reference;    /* (sequence number << 48) | record number */
++    ULONGLONG creation;     /* FILETIME */
++    ULONG     attributes;
++};
++
++static struct ntfs_volume ntfs_volumes[8];
++static unsigned int ntfs_volume_count;
++static pthread_mutex_t ntfs_mutex = PTHREAD_MUTEX_INITIALIZER;
++
++static ULONGLONG ntfs_le( const unsigned char *p, unsigned int size )
++{
++    ULONGLONG ret = 0;
++    while (size--) ret = (ret << 8) | p[size];
++    return ret;
++}
++
++static BOOL ntfs_read_record( const struct ntfs_volume *vol, ULONGLONG number, unsigned char *rec )
++{
++    ULONGLONG offset = number * vol->record;
++    unsigned int i, usa_ofs, usa_count;
++
++    for (i = 0; i < vol->nb_runs; i++)
++    {
++        ULONGLONG size = vol->runs[i].len * vol->cluster;
++        if (offset < size) break;
++        offset -= size;
++    }
++    if (i == vol->nb_runs) return FALSE;
++    if (pread( vol->fd, rec, vol->record, vol->runs[i].lcn * vol->cluster + offset ) != vol->record) return FALSE;
++    if (memcmp( rec, "FILE", 4 )) return FALSE;
++
++    /* undo the update sequence array */
++    usa_ofs = ntfs_le( rec + 4, 2 );
++    usa_count = ntfs_le( rec + 6, 2 );
++    for (i = 1; i < usa_count; i++)
++    {
++        if (i * vol->sector > vol->record || usa_ofs + 2 * i + 2 > vol->record) return FALSE;
++        memcpy( rec + i * vol->sector - 2, rec + usa_ofs + 2 * i, 2 );
++    }
++    return TRUE;
++}
++
++/* find an attribute in a file record; returns its offset or 0 */
++static unsigned int ntfs_find_attribute( const struct ntfs_volume *vol, const unsigned char *rec, ULONG type )
++{
++    unsigned int pos = ntfs_le( rec + 20, 2 );
++
++    while (pos + 16 <= vol->record)
++    {
++        ULONG atype = ntfs_le( rec + pos, 4 ), alen = ntfs_le( rec + pos + 4, 4 );
++        if (atype == 0xffffffff || !alen || pos + alen > vol->record) break;
++        if (atype == type && !rec[pos + 9] /* unnamed */) return pos;
++        pos += alen;
++    }
++    return 0;
++}
++
++static void ntfs_open_volume( struct ntfs_volume *vol, dev_t dev )
++{
++    unsigned char boot[512], rec[4096];
++    char path[64], line[128], devname[64] = "";
++    unsigned int pos, runs_pos;
++    LONGLONG lcn = 0;
++    FILE *f;
++    int c;
++
++    memset( vol, 0, sizeof(*vol) );
++    vol->dev = dev;
++    vol->fd  = -1;
++
++    snprintf( path, sizeof(path), "/sys/dev/block/%u:%u/uevent", major(dev), minor(dev) );
++    if (!(f = fopen( path, "r" ))) return;
++    while (fgets( line, sizeof(line), f ))
++        if (!strncmp( line, "DEVNAME=", 8 )) snprintf( devname, sizeof(devname), "/dev/%s", line + 8 );
++    fclose( f );
++    devname[strcspn( devname, "\n" )] = 0;
++    if (!devname[0]) return;
++
++    if ((vol->fd = open( devname, O_RDONLY | O_CLOEXEC )) == -1) return;
++    if (pread( vol->fd, boot, sizeof(boot), 0 ) != sizeof(boot) || memcmp( boot + 3, "NTFS    ", 8 )) goto failed;
++
++    vol->sector  = ntfs_le( boot + 11, 2 );
++    vol->cluster = vol->sector * boot[13];
++    c = (signed char)boot[64];
++    vol->record  = c < 0 ? 1u << -c : c * vol->cluster;
++    if (!vol->sector || !vol->cluster || !vol->record || vol->record > sizeof(rec)) goto failed;
++
++    /* bootstrap: record 0 describes $MFT itself */
++    vol->runs[0].lcn = ntfs_le( boot + 48, 8 );
++    vol->runs[0].len = (vol->record + vol->cluster - 1) / vol->cluster;
++    vol->nb_runs = 1;
++    if (!ntfs_read_record( vol, 0, rec )) goto failed;
++    if (!(pos = ntfs_find_attribute( vol, rec, 0x80 )) || !rec[pos + 8] /* resident */) goto failed;
++
++    vol->nb_runs = 0;
++    runs_pos = pos + ntfs_le( rec + pos + 32, 2 );
++    while (runs_pos < vol->record && rec[runs_pos] && vol->nb_runs < ARRAY_SIZE(vol->runs))
++    {
++        unsigned int len_size = rec[runs_pos] & 0xf, ofs_size = rec[runs_pos] >> 4;
++        ULONGLONG len, raw;
++
++        if (runs_pos + 1 + len_size + ofs_size > vol->record || len_size > 8 || ofs_size > 8 || !ofs_size) goto failed;
++        len = ntfs_le( rec + runs_pos + 1, len_size );
++        raw = ntfs_le( rec + runs_pos + 1 + len_size, ofs_size );
++        if (ofs_size < 8 && (raw >> (ofs_size * 8 - 1))) raw |= ~(ULONGLONG)0 << (ofs_size * 8);  /* sign extend */
++        lcn += (LONGLONG)raw;
++        vol->runs[vol->nb_runs].lcn = lcn;
++        vol->runs[vol->nb_runs].len = len;
++        vol->nb_runs++;
++        runs_pos += 1 + len_size + ofs_size;
++    }
++    if (vol->nb_runs) return;
++
++failed:
++    close( vol->fd );
++    vol->fd = -1;
++}
++
++static BOOL ntfs_get_file_facts( const struct stat *st, struct ntfs_file_facts *facts )
++{
++    struct ntfs_volume *vol = NULL;
++    unsigned char rec[4096];
++    unsigned int i, pos, body;
++    BOOL ret = FALSE;
++
++    pthread_mutex_lock( &ntfs_mutex );
++    for (i = 0; i < ntfs_volume_count; i++)
++        if (ntfs_volumes[i].dev == st->st_dev) vol = &ntfs_volumes[i];
++    if (!vol && ntfs_volume_count < ARRAY_SIZE(ntfs_volumes))
++    {
++        vol = &ntfs_volumes[ntfs_volume_count++];
++        ntfs_open_volume( vol, st->st_dev );
++    }
++    if (vol && vol->fd != -1 && ntfs_read_record( vol, st->st_ino, rec ) &&
++        (pos = ntfs_find_attribute( vol, rec, 0x10 )) && !rec[pos + 8])
++    {
++        body = pos + ntfs_le( rec + pos + 20, 2 );
++        if (body + 36 <= vol->record)
++        {
++            facts->reference  = (ntfs_le( rec + 16, 2 ) << 48) | st->st_ino;
++            facts->creation   = ntfs_le( rec + body, 8 );
++            facts->attributes = ntfs_le( rec + body + 32, 4 );
++            ret = TRUE;
++        }
++    }
++    pthread_mutex_unlock( &ntfs_mutex );
++    return ret;
++}
++#endif  /* __linux__ */
++
++/* the number Windows calls the file index / file ID */
++static ULONGLONG get_file_index( const struct stat *st )
++{
++#ifdef __linux__
++    struct ntfs_file_facts facts;
++    if (ntfs_get_file_facts( st, &facts )) return facts.reference;
++#endif
++    return st->st_ino;
++}
++
+ static inline ULONG get_file_attributes( const struct stat *st )
+ {
+     ULONG attr;
+@@ -1337,6 +1518,13 @@ static inline ULONG get_file_attributes( const struct stat *st )
+         attr = FILE_ATTRIBUTE_ARCHIVE;
+     if (!(st->st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)))
+         attr |= FILE_ATTRIBUTE_READONLY;
++#ifdef __linux__
++    {
++        struct ntfs_file_facts facts;
++        if (ntfs_get_file_facts( st, &facts ))
++            attr |= facts.attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
++    }
++#endif
+     return attr;
+ }
+ 
+@@ -1676,6 +1864,12 @@ static inline void get_file_times( const struct stat *st, LARGE_INTEGER *mtime,
+ #else
+     *creation = *mtime;
+ #endif
++#ifdef __linux__
++    {
++        struct ntfs_file_facts facts;
++        if (ntfs_get_file_facts( st, &facts )) creation->QuadPart = facts.creation;
++    }
++#endif
+ }
+ 
+ 
+@@ -1715,7 +1909,7 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+     case FileInternalInformation:
+         {
+             FILE_INTERNAL_INFORMATION *info = ptr;
+-            info->IndexNumber.QuadPart = st->st_ino;
++            info->IndexNumber.QuadPart = get_file_index( st );
+         }
+         break;
+     case FileEndOfFileInformation:
+@@ -1775,14 +1969,14 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+     case FileIdFullDirectoryInformation:
+         {
+             FILE_ID_FULL_DIRECTORY_INFORMATION *info = ptr;
+-            info->FileId.QuadPart = st->st_ino;
++            info->FileId.QuadPart = get_file_index( st );
+             fill_file_info( st, attr, info, FileDirectoryInformation );
+         }
+         break;
+     case FileIdBothDirectoryInformation:
+         {
+             FILE_ID_BOTH_DIRECTORY_INFORMATION *info = ptr;
+-            info->FileId.QuadPart = st->st_ino;
++            info->FileId.QuadPart = get_file_index( st );
+             fill_file_info( st, attr, info, FileDirectoryInformation );
+         }
+         break;
+@@ -1790,14 +1984,14 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+         {
+             FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION *info = ptr;
+             memset( &info->FileId, 0, sizeof(info->FileId) );
+-            *(ULONGLONG *)&info->FileId = st->st_ino;
++            *(ULONGLONG *)&info->FileId = get_file_index( st );
+             fill_file_info( st, attr, info, FileDirectoryInformation );
+         }
+         break;
+     case FileIdGlobalTxDirectoryInformation:
+         {
+             FILE_ID_GLOBAL_TX_DIR_INFORMATION *info = ptr;
+-            info->FileId.QuadPart = st->st_ino;
++            info->FileId.QuadPart = get_file_index( st );
+             fill_file_info( st, attr, info, FileDirectoryInformation );
+         }
+         break;
+@@ -6427,6 +6621,77 @@ static void ignore_server_ioctl_struct_holes( ULONG code, const void *in_buffer,
+ }
+ 
+ 
++/* Report where a file's data lies on its volume, in clusters, from the
++ * kernel's extent map. Returns STATUS_NOT_SUPPORTED if that is unavailable. */
++static NTSTATUS get_retrieval_pointers( int fd, LONGLONG start_vcn, RETRIEVAL_POINTERS_BUFFER *buffer,
++                                        ULONG out_size, ULONG_PTR *ret_size )
++{
++#ifdef FS_IOC_FIEMAP
++    enum { MAX_EXTENTS = 64 };
++    struct
++    {
++        struct fiemap        map;
++        struct fiemap_extent extents[MAX_EXTENTS];
++    } req;
++    const ULONG max_count = (out_size - offsetof( RETRIEVAL_POINTERS_BUFFER, Extents )) / sizeof(buffer->Extents[0]);
++    NTSTATUS status = STATUS_SUCCESS;
++    struct statfs stfs;
++    struct stat st;
++    ULONGLONG cluster, next_vcn;
++    ULONG i, count = 0;
++
++    if (start_vcn < 0) return STATUS_INVALID_PARAMETER;
++    if (fstat( fd, &st ) || !S_ISREG( st.st_mode )) return STATUS_NOT_SUPPORTED;
++    if (fstatfs( fd, &stfs ) || !stfs.f_bsize) return STATUS_NOT_SUPPORTED;
++    cluster = stfs.f_bsize;
++
++    memset( &req, 0, sizeof(req) );
++    req.map.fm_start        = (ULONGLONG)start_vcn * cluster;
++    req.map.fm_length       = ~(ULONGLONG)0;
++    req.map.fm_flags        = FIEMAP_FLAG_SYNC;
++    req.map.fm_extent_count = MAX_EXTENTS;
++    if (ioctl( fd, FS_IOC_FIEMAP, &req.map ) < 0) return STATUS_NOT_SUPPORTED;
++
++    /* no extent at or after the starting VCN, or data stored inside the file record */
++    if (!req.map.fm_mapped_extents) return STATUS_END_OF_FILE;
++    if (req.extents[0].fe_flags & (FIEMAP_EXTENT_DATA_INLINE | FIEMAP_EXTENT_NOT_ALIGNED))
++        return STATUS_END_OF_FILE;
++    if (req.extents[0].fe_flags & FIEMAP_EXTENT_UNKNOWN) return STATUS_NOT_SUPPORTED;
++
++    next_vcn = req.extents[0].fe_logical / cluster;
++    buffer->StartingVcn.QuadPart = next_vcn;
++
++    for (i = 0; i < req.map.fm_mapped_extents; i++)
++    {
++        const struct fiemap_extent *ext = &req.extents[i];
++        ULONGLONG vcn = ext->fe_logical / cluster;
++        ULONGLONG len = (ext->fe_length + cluster - 1) / cluster;
++
++        if (vcn > next_vcn)  /* hole: Windows reports it as an extent without clusters */
++        {
++            if (count >= max_count) { status = STATUS_BUFFER_OVERFLOW; break; }
++            buffer->Extents[count].NextVcn.QuadPart = vcn;
++            buffer->Extents[count].Lcn.QuadPart     = -1;
++            count++;
++        }
++        if (count >= max_count) { status = STATUS_BUFFER_OVERFLOW; break; }
++        buffer->Extents[count].NextVcn.QuadPart = vcn + len;
++        buffer->Extents[count].Lcn.QuadPart     = ext->fe_physical / cluster;
++        count++;
++        next_vcn = vcn + len;
++    }
++    if (!status && !(req.extents[req.map.fm_mapped_extents - 1].fe_flags & FIEMAP_EXTENT_LAST))
++        status = STATUS_BUFFER_OVERFLOW;
++
++    buffer->ExtentCount = count;
++    *ret_size = offsetof( RETRIEVAL_POINTERS_BUFFER, Extents[count] );
++    return status;
++#else
++    return STATUS_NOT_SUPPORTED;
++#endif
++}
++
++
+ /******************************************************************************
+  *              NtFsControlFile   (NTDLL.@)
+  */
+@@ -6468,11 +6733,25 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
+     case FSCTL_GET_RETRIEVAL_POINTERS:
+     {
+         RETRIEVAL_POINTERS_BUFFER *buffer = (RETRIEVAL_POINTERS_BUFFER *)out_buffer;
++        int fd, needs_close;
+ 
+-        FIXME("stub: FSCTL_GET_RETRIEVAL_POINTERS\n");
+-
+-        if (out_size >= sizeof(RETRIEVAL_POINTERS_BUFFER))
++        if (in_size < sizeof(LARGE_INTEGER) || !in_buffer)
+         {
++            status = STATUS_INVALID_PARAMETER;
++            break;
++        }
++        if (out_size < sizeof(RETRIEVAL_POINTERS_BUFFER))
++        {
++            status = STATUS_BUFFER_TOO_SMALL;
++            break;
++        }
++        if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL ))) break;
++        status = get_retrieval_pointers( fd, ((const LARGE_INTEGER *)in_buffer)->QuadPart, buffer, out_size, &size );
++        if (needs_close) close( fd );
++
++        if (status == STATUS_NOT_SUPPORTED)
++        {
++            FIXME("stub: FSCTL_GET_RETRIEVAL_POINTERS\n");
+             buffer->ExtentCount                 = 1;
+             buffer->StartingVcn.QuadPart        = 1;
+             buffer->Extents[0].NextVcn.QuadPart = 0;
+@@ -6480,10 +6759,6 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
+             size = sizeof(RETRIEVAL_POINTERS_BUFFER);
+             status = STATUS_SUCCESS;
+         }
+-        else
+-        {
+-            status = STATUS_BUFFER_TOO_SMALL;
+-        }
+         break;
+     }
+ 

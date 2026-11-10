@@ -100,10 +100,15 @@ def main():
         if rec[:4] != b'FILE':
             print('record %d: not in use' % number)
             continue
-        print('record %d:' % number)
+        seq = struct.unpack_from('<H', rec, 16)[0]
+        print('record %d: sequence number %d, file reference 0x%016x' % (number, seq, (seq << 48) | number))
         for atype, attr in attributes(rec):
             nonresident = attr[8]
-            if atype == 0x30:       # $FILE_NAME
+            if atype == 0x10:       # $STANDARD_INFORMATION
+                body = attr[struct.unpack_from('<H', attr, 20)[0]:]
+                created, modified, changed, accessed, flags = struct.unpack_from('<QQQQI', body, 0)
+                print('  attributes: 0x%08x, created %d, modified %d' % (flags, created, modified))
+            elif atype == 0x30:     # $FILE_NAME
                 body = attr[struct.unpack_from('<H', attr, 20)[0]:]
                 name = body[66:66 + 2 * body[64]].decode('utf-16le')
                 print('  name: %s' % name)
