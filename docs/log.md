@@ -249,3 +249,22 @@
 - Earlier note corrected: the `c00000cb` results for `\??\G:` are not a
   permission problem; every drive letter shows them, it is how Wine routes
   volume opens.
+- What the licence volume really says (`tools/ntfs_probe.py`, read-only, on the
+  raw device): cluster size 4096; the nine key files are 2.5-5.4 kB each, stored
+  non-resident in single runs at fixed cluster numbers; none of them, nor the
+  `AX NF ZZ` folder, has an NTFS object ID. The trace shows the licence manager
+  calling `FSCTL_GET_RETRIEVAL_POINTERS` on each key file, so the on-disk
+  location of the files is what it looks at. Wine 11.20 answers that call with
+  a fixed dummy extent at cluster 0.
+- Two patches so Wine reports what is really there (need a full Wine build,
+  `scripts/build-wine.sh`, because they are in Unix-side code):
+  - `0007-mountmgr-ntfs-volume-serial.patch`: recognise an NTFS boot sector and
+    take the volume serial number from it (needs read access to the device).
+  - `0008-ntdll-retrieval-pointers-from-fiemap.patch`: answer
+    `FSCTL_GET_RETRIEVAL_POINTERS` from the kernel's extent map (FIEMAP).
+  Neither is built or tested yet.
+- Licence manager GUI: `almapp64x.exe` starts `almgui64x.exe` with a restricted
+  token (`NtFilterToken`, `TokenIntegrityLevel`, both unsupported in Wine) and
+  restarts it about 90 times in a minute; no window appears, and one instance
+  dies calling a null pointer. `winedbg` cannot start or attach to these
+  programs; that is left alone.

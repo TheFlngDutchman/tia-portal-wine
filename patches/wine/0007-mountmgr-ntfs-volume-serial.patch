@@ -1,0 +1,42 @@
+diff --git i/dlls/mountmgr.sys/device.c w/dlls/mountmgr.sys/device.c
+index b9078c7..4e55593 100644
+--- i/dlls/mountmgr.sys/device.c
++++ w/dlls/mountmgr.sys/device.c
+@@ -58,7 +58,8 @@ enum fs_type
+     FS_FAT1216,
+     FS_FAT32,
+     FS_ISO9660,
+-    FS_UDF       /* For reference [E] = Ecma-167.pdf, [U] = udf260.pdf */
++    FS_UDF,      /* For reference [E] = Ecma-167.pdf, [U] = udf260.pdf */
++    FS_NTFS
+ };
+ 
+ /* struct disk_device represents any drive or filesystem (partition).
+@@ -243,6 +244,8 @@ static enum fs_type VOLUME_ReadFATSuperblock( HANDLE handle, BYTE *buff )
+ 
+     if (size < SUPERBLOCK_SIZE) return FS_UNKNOWN;
+ 
++    if (!memcmp(buff+3, "NTFS    ", 8)) return FS_NTFS;
++
+     /* FIXME: do really all FAT have their name beginning with
+      * "FAT" ? (At least FAT12, FAT16 and FAT32 have :)
+      */
+@@ -402,6 +405,7 @@ static void VOLUME_GetSuperblockLabel( struct volume *volume, HANDLE handle, con
+         label_len = 0;
+         break;
+     case FS_UNKNOWN:
++    case FS_NTFS:   /* the NTFS label is in the $Volume file, not in the boot sector */
+         get_filesystem_label( volume );
+         return;
+     case FS_FAT1216:
+@@ -545,6 +549,10 @@ static void VOLUME_GetSuperblockSerial( struct volume *volume, HANDLE handle, co
+     case FS_FAT32:
+         volume->serial = GETLONG( superblock, 0x43 );
+         break;
++    case FS_NTFS:
++        /* low half of the 64-bit serial number in the boot sector */
++        volume->serial = GETLONG( superblock, 0x48 );
++        break;
+     case FS_UDF:
+         FSD_sector = UDF_Find_FSD_Sector(handle, block);
+         if (!VOLUME_ReadCDBlock(handle, block, FSD_sector*BLOCK_SIZE))

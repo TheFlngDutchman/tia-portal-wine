@@ -1,0 +1,133 @@
+diff --git i/dlls/ntdll/unix/file.c w/dlls/ntdll/unix/file.c
+index 8b87cc8..95d8dd4 100644
+--- i/dlls/ntdll/unix/file.c
++++ w/dlls/ntdll/unix/file.c
+@@ -96,6 +96,10 @@
+ #ifdef HAVE_SYS_STATFS_H
+ #include <sys/statfs.h>
+ #endif
++#ifdef __linux__
++# include <linux/fs.h>
++# include <linux/fiemap.h>
++#endif
+ #ifdef HAVE_SYS_XATTR_H
+ #include <sys/xattr.h>
+ #endif
+@@ -6427,6 +6431,77 @@ static void ignore_server_ioctl_struct_holes( ULONG code, const void *in_buffer,
+ }
+ 
+ 
++/* Report where a file's data lies on its volume, in clusters, from the
++ * kernel's extent map. Returns STATUS_NOT_SUPPORTED if that is unavailable. */
++static NTSTATUS get_retrieval_pointers( int fd, LONGLONG start_vcn, RETRIEVAL_POINTERS_BUFFER *buffer,
++                                        ULONG out_size, ULONG *ret_size )
++{
++#ifdef FS_IOC_FIEMAP
++    enum { MAX_EXTENTS = 64 };
++    struct
++    {
++        struct fiemap        map;
++        struct fiemap_extent extents[MAX_EXTENTS];
++    } req;
++    const ULONG max_count = (out_size - offsetof( RETRIEVAL_POINTERS_BUFFER, Extents )) / sizeof(buffer->Extents[0]);
++    NTSTATUS status = STATUS_SUCCESS;
++    struct statfs stfs;
++    struct stat st;
++    ULONGLONG cluster, next_vcn;
++    ULONG i, count = 0;
++
++    if (start_vcn < 0) return STATUS_INVALID_PARAMETER;
++    if (fstat( fd, &st ) || !S_ISREG( st.st_mode )) return STATUS_NOT_SUPPORTED;
++    if (fstatfs( fd, &stfs ) || !stfs.f_bsize) return STATUS_NOT_SUPPORTED;
++    cluster = stfs.f_bsize;
++
++    memset( &req, 0, sizeof(req) );
++    req.map.fm_start        = (ULONGLONG)start_vcn * cluster;
++    req.map.fm_length       = ~(ULONGLONG)0;
++    req.map.fm_flags        = FIEMAP_FLAG_SYNC;
++    req.map.fm_extent_count = MAX_EXTENTS;
++    if (ioctl( fd, FS_IOC_FIEMAP, &req.map ) < 0) return STATUS_NOT_SUPPORTED;
++
++    /* no extent at or after the starting VCN, or data stored inside the file record */
++    if (!req.map.fm_mapped_extents) return STATUS_END_OF_FILE;
++    if (req.extents[0].fe_flags & (FIEMAP_EXTENT_DATA_INLINE | FIEMAP_EXTENT_NOT_ALIGNED))
++        return STATUS_END_OF_FILE;
++    if (req.extents[0].fe_flags & FIEMAP_EXTENT_UNKNOWN) return STATUS_NOT_SUPPORTED;
++
++    next_vcn = req.extents[0].fe_logical / cluster;
++    buffer->StartingVcn.QuadPart = next_vcn;
++
++    for (i = 0; i < req.map.fm_mapped_extents; i++)
++    {
++        const struct fiemap_extent *ext = &req.extents[i];
++        ULONGLONG vcn = ext->fe_logical / cluster;
++        ULONGLONG len = (ext->fe_length + cluster - 1) / cluster;
++
++        if (vcn > next_vcn)  /* hole: Windows reports it as an extent without clusters */
++        {
++            if (count >= max_count) { status = STATUS_BUFFER_OVERFLOW; break; }
++            buffer->Extents[count].NextVcn.QuadPart = vcn;
++            buffer->Extents[count].Lcn.QuadPart     = -1;
++            count++;
++        }
++        if (count >= max_count) { status = STATUS_BUFFER_OVERFLOW; break; }
++        buffer->Extents[count].NextVcn.QuadPart = vcn + len;
++        buffer->Extents[count].Lcn.QuadPart     = ext->fe_physical / cluster;
++        count++;
++        next_vcn = vcn + len;
++    }
++    if (!status && !(req.extents[req.map.fm_mapped_extents - 1].fe_flags & FIEMAP_EXTENT_LAST))
++        status = STATUS_BUFFER_OVERFLOW;
++
++    buffer->ExtentCount = count;
++    *ret_size = offsetof( RETRIEVAL_POINTERS_BUFFER, Extents[count] );
++    return status;
++#else
++    return STATUS_NOT_SUPPORTED;
++#endif
++}
++
++
+ /******************************************************************************
+  *              NtFsControlFile   (NTDLL.@)
+  */
+@@ -6468,11 +6543,25 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
+     case FSCTL_GET_RETRIEVAL_POINTERS:
+     {
+         RETRIEVAL_POINTERS_BUFFER *buffer = (RETRIEVAL_POINTERS_BUFFER *)out_buffer;
++        int fd, needs_close;
+ 
+-        FIXME("stub: FSCTL_GET_RETRIEVAL_POINTERS\n");
+-
+-        if (out_size >= sizeof(RETRIEVAL_POINTERS_BUFFER))
++        if (in_size < sizeof(LARGE_INTEGER) || !in_buffer)
+         {
++            status = STATUS_INVALID_PARAMETER;
++            break;
++        }
++        if (out_size < sizeof(RETRIEVAL_POINTERS_BUFFER))
++        {
++            status = STATUS_BUFFER_TOO_SMALL;
++            break;
++        }
++        if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL ))) break;
++        status = get_retrieval_pointers( fd, ((const LARGE_INTEGER *)in_buffer)->QuadPart, buffer, out_size, &size );
++        if (needs_close) close( fd );
++
++        if (status == STATUS_NOT_SUPPORTED)
++        {
++            FIXME("stub: FSCTL_GET_RETRIEVAL_POINTERS\n");
+             buffer->ExtentCount                 = 1;
+             buffer->StartingVcn.QuadPart        = 1;
+             buffer->Extents[0].NextVcn.QuadPart = 0;
+@@ -6480,10 +6569,6 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
+             size = sizeof(RETRIEVAL_POINTERS_BUFFER);
+             status = STATUS_SUCCESS;
+         }
+-        else
+-        {
+-            status = STATUS_BUFFER_TOO_SMALL;
+-        }
+         break;
+     }
+ 
