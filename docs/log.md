@@ -187,3 +187,16 @@
     to a session key) and, most likely, the symmetric encrypt/decrypt entry
     points, which `dssenh` does not have at all. Wine's `bcrypt` has DH, so the
     arithmetic exists. Not started.
+- `dssenh` Diffie-Hellman, first stage
+  (`patches/wine/0006-dssenh-diffie-hellman.patch`): `CALG_DH_EPHEM` keys with
+  `CRYPT_PREGEN`, `KP_P` / `KP_G` / `KP_X`, public key export, import of the
+  peer's public key into an agreed key, `KP_ALGID`. `CPEncrypt`, `CPDecrypt`
+  and `CPGetKeyParam` exist but only log and fail. Test: `tests/capi-dh`.
+  - Result: on a clean start the Automation License Manager service reaches
+    RUNNING, creates its databases properly (36 kB and 24 kB instead of 0
+    bytes) and listens on 127.0.0.1:4410. It generates two DH keys at start and
+    exports one public key; no key agreement or encryption was requested yet.
+  - Start-up still takes about four minutes because of the wait for the
+    `ALMPANELPLUGIN` COM server (see above).
+  - The licence manager GUI (`almapp64x.exe`) crashes at start with a call
+    through a null pointer; not looked into.

@@ -1,0 +1,349 @@
+diff --git i/dlls/dssenh/dssenh.spec w/dlls/dssenh/dssenh.spec
+index fb83aed..eea2a50 100644
+--- i/dlls/dssenh/dssenh.spec
++++ w/dlls/dssenh/dssenh.spec
+@@ -1,17 +1,17 @@
+ @ stdcall CPAcquireContext(ptr str long ptr)
+ @ stdcall CPCreateHash(ptr long ptr long ptr)
+-@ stub CPDecrypt
++@ stdcall CPDecrypt(ptr ptr ptr long long ptr ptr)
+ @ stdcall CPDeriveKey(ptr long ptr long ptr)
+ @ stdcall CPDestroyHash(ptr ptr)
+ @ stdcall CPDestroyKey(ptr ptr)
+ @ stdcall CPDuplicateHash(ptr ptr ptr long ptr)
+ @ stdcall CPDuplicateKey(ptr ptr ptr long ptr)
+-@ stub CPEncrypt
++@ stdcall CPEncrypt(ptr ptr ptr long long ptr ptr long)
+ @ stdcall CPExportKey(ptr ptr ptr long long ptr ptr)
+ @ stdcall CPGenKey(ptr long long ptr)
+ @ stdcall CPGenRandom(ptr long ptr)
+ @ stdcall CPGetHashParam(ptr ptr long ptr ptr long)
+-@ stub CPGetKeyParam
++@ stdcall CPGetKeyParam(ptr ptr long ptr ptr long)
+ @ stdcall CPGetProvParam(ptr long ptr ptr long)
+ @ stdcall CPGetUserKey(ptr long ptr)
+ @ stdcall CPHashData(ptr ptr ptr long long)
+diff --git i/dlls/dssenh/main.c w/dlls/dssenh/main.c
+index 5634168..fbd3065 100644
+--- i/dlls/dssenh/main.c
++++ w/dlls/dssenh/main.c
+@@ -45,8 +45,21 @@ struct key
+     DWORD             bitlen;
+     SYMCRYPT_DLGROUP *group;
+     SYMCRYPT_DLKEY   *handle;
++    /* Diffie-Hellman */
++    BYTE             *dh_p;         /* prime, little endian, bitlen / 8 bytes */
++    BYTE             *dh_g;         /* generator, little endian, bitlen / 8 bytes */
++    BYTE             *secret;       /* agreed secret, little endian */
++    DWORD             secret_len;
++    ALG_ID            session_alg;  /* algorithm an agreed key was converted to */
+ };
+ 
++#define MAGIC_DH1 ('\0' | ('D' << 8) | ('H' << 16) | ('1' << 24))
++
++static BOOL is_dh_algid( ALG_ID algid )
++{
++    return algid == CALG_DH_EPHEM || algid == CALG_DH_SF;
++}
++
+ #define MAGIC_CONTAINER (('C' << 24) | ('O' << 16) | ('N' << 8) | 'T')
+ struct container
+ {
+@@ -207,6 +220,8 @@ static struct key *create_key( ALG_ID algid, DWORD bitlen, DWORD flags )
+     {
+     case CALG_DSS_SIGN:
+     case CALG_DH_SF:
++    case CALG_DH_EPHEM:
++    case CALG_AGREEDKEY_ANY:
+         break;
+ 
+     default:
+@@ -229,6 +244,13 @@ static void destroy_key( struct key *key )
+     if (!key) return;
+     if (key->handle) SymCryptDlkeyFree( key->handle );
+     if (key->group) SymCryptDlgroupFree( key->group );
++    free( key->dh_p );
++    free( key->dh_g );
++    if (key->secret)
++    {
++        SecureZeroMemory( key->secret, key->secret_len );
++        free( key->secret );
++    }
+     /* Ensure compiler doesn't optimize out the assignment with 0. */
+     SecureZeroMemory( &key->magic, sizeof(key->magic) );
+     free( key );
+@@ -708,6 +730,139 @@ error:
+     return FALSE;
+ }
+ 
++/* Build the group from P and G and generate the private value. */
++static BOOL finish_dh_key( struct key *key )
++{
++    DWORD size = key->bitlen / 8;
++
++    if (key->handle) return TRUE;
++    if (!key->dh_p || !key->dh_g)
++    {
++        SetLastError( NTE_BAD_KEY_STATE );
++        return FALSE;
++    }
++    if (!(key->group = SymCryptDlgroupAllocate( key->bitlen, 0 ))) goto error;
++    if (SymCryptDlgroupSetValue( key->dh_p, size, NULL, 0, key->dh_g, size, SYMCRYPT_NUMBER_FORMAT_LSB_FIRST,
++                                 NULL, NULL, 0, 0, SYMCRYPT_DLGROUP_FIPS_NONE, key->group ))
++    {
++        WARN( "invalid group parameters\n" );
++        goto error;
++    }
++    if (!(key->handle = SymCryptDlkeyAllocate( key->group ))) goto error;
++    if (SymCryptDlkeyGenerate( SYMCRYPT_FLAG_KEY_NO_FIPS | SYMCRYPT_FLAG_DLKEY_DH, key->handle )) goto error;
++    return TRUE;
++
++error:
++    if (key->handle) SymCryptDlkeyFree( key->handle );
++    if (key->group) SymCryptDlgroupFree( key->group );
++    key->handle = NULL;
++    key->group = NULL;
++    SetLastError( NTE_BAD_DATA );
++    return FALSE;
++}
++
++static BOOL generate_dh_key( ALG_ID algid, DWORD bitlen, DWORD flags, HCRYPTKEY *ret_key )
++{
++    struct key *key;
++
++    if (!(key = create_key( algid, bitlen, flags ))) return FALSE;
++
++    /* With CRYPT_PREGEN the caller supplies P and G and then sets KP_X. */
++    if (!(flags & CRYPT_PREGEN))
++    {
++        if (!(key->group = SymCryptDlgroupAllocate( bitlen, 0 )) ||
++            SymCryptDlgroupGenerate( NULL, SYMCRYPT_DLGROUP_FIPS_186_2, key->group ) ||
++            !(key->handle = SymCryptDlkeyAllocate( key->group )) ||
++            SymCryptDlkeyGenerate( SYMCRYPT_FLAG_KEY_NO_FIPS | SYMCRYPT_FLAG_DLKEY_DH, key->handle ))
++        {
++            destroy_key( key );
++            SetLastError( NTE_FAIL );
++            return FALSE;
++        }
++    }
++
++    *ret_key = (HCRYPTKEY)key;
++    return TRUE;
++}
++
++static BOOL export_dh_public_key( const struct key *key, BYTE *output, DWORD output_len, DWORD *ret_len )
++{
++    DWORD size = key->bitlen / 8, len = sizeof(BLOBHEADER) + sizeof(DHPUBKEY) + size;
++    BLOBHEADER *hdr = (BLOBHEADER *)output;
++    DHPUBKEY *pubkey;
++
++    if (!key->handle)
++    {
++        SetLastError( NTE_BAD_KEY_STATE );
++        return FALSE;
++    }
++    *ret_len = len;
++    if (!output) return TRUE;
++    if (output_len < len)
++    {
++        SetLastError( ERROR_MORE_DATA );
++        return FALSE;
++    }
++
++    hdr->bType    = PUBLICKEYBLOB;
++    hdr->bVersion = 2;
++    hdr->reserved = 0;
++    hdr->aiKeyAlg = key->algid;
++    pubkey = (DHPUBKEY *)(hdr + 1);
++    pubkey->magic  = MAGIC_DH1;
++    pubkey->bitlen = key->bitlen;
++    if (SymCryptDlkeyGetValue( key->handle, NULL, 0, (BYTE *)(pubkey + 1), size,
++                               SYMCRYPT_NUMBER_FORMAT_LSB_FIRST, 0 ))
++    {
++        SetLastError( NTE_FAIL );
++        return FALSE;
++    }
++    return TRUE;
++}
++
++/* Import the other party's public value and compute the agreed secret. */
++static BOOL import_dh_public_key( const BYTE *data, DWORD len, const struct key *own, DWORD flags,
++                                  HCRYPTKEY *ret_key )
++{
++    const BLOBHEADER *hdr = (const BLOBHEADER *)data;
++    const DHPUBKEY *pubkey = (const DHPUBKEY *)(hdr + 1);
++    SYMCRYPT_DLKEY *peer = NULL;
++    struct key *key = NULL;
++    DWORD size;
++
++    if (!own || own->magic != MAGIC_KEY || !is_dh_algid( own->algid ) || !own->handle)
++    {
++        SetLastError( NTE_BAD_KEY );
++        return FALSE;
++    }
++    size = own->bitlen / 8;
++    if (len < sizeof(*hdr) + sizeof(*pubkey) + size || pubkey->magic != MAGIC_DH1 || pubkey->bitlen != own->bitlen)
++    {
++        SetLastError( NTE_BAD_DATA );
++        return FALSE;
++    }
++
++    if (!(key = create_key( CALG_AGREEDKEY_ANY, own->bitlen, flags ))) return FALSE;
++    if (!(key->secret = calloc( 1, size ))) goto error;
++    key->secret_len = size;
++
++    if (!(peer = SymCryptDlkeyAllocate( own->group ))) goto error;
++    if (SymCryptDlkeySetValue( NULL, 0, (const BYTE *)(pubkey + 1), size, SYMCRYPT_NUMBER_FORMAT_LSB_FIRST,
++                               SYMCRYPT_FLAG_KEY_NO_FIPS | SYMCRYPT_FLAG_DLKEY_DH, peer )) goto error;
++    if (SymCryptDhSecretAgreement( own->handle, peer, SYMCRYPT_NUMBER_FORMAT_LSB_FIRST, 0,
++                                   key->secret, size )) goto error;
++
++    SymCryptDlkeyFree( peer );
++    *ret_key = (HCRYPTKEY)key;
++    return TRUE;
++
++error:
++    if (peer) SymCryptDlkeyFree( peer );
++    destroy_key( key );
++    SetLastError( NTE_BAD_DATA );
++    return FALSE;
++}
++
+ BOOL WINAPI CPGenKey( HCRYPTPROV hprov, ALG_ID algid, DWORD flags, HCRYPTKEY *ret_key )
+ {
+     static const unsigned int supported_key_lengths[] = { 512, 768, 1024 };
+@@ -732,6 +887,9 @@ BOOL WINAPI CPGenKey( HCRYPTPROV hprov, ALG_ID algid, DWORD flags, HCRYPTKEY *re
+         return FALSE;
+     }
+ 
++    if (algid == CALG_DH_EPHEM || (algid == CALG_DH_SF && (flags & CRYPT_PREGEN)))
++        return generate_dh_key( algid, bitlen, LOWORD(flags), ret_key );
++
+     return generate_key( container, algid, bitlen, LOWORD(flags), ret_key );
+ }
+ 
+@@ -815,6 +973,9 @@ BOOL WINAPI CPImportKey( HCRYPTPROV hprov, const BYTE *data, DWORD len, HCRYPTKE
+     }
+ 
+     hdr = (const BLOBHEADER *)data;
++    if (hdr->bType == PUBLICKEYBLOB && is_dh_algid( hdr->aiKeyAlg ) && hpubkey)
++        return import_dh_public_key( data, len, (const struct key *)hpubkey, flags, ret_key );
++
+     if ((hdr->bType != PRIVATEKEYBLOB && hdr->bType != PUBLICKEYBLOB) || hdr->aiKeyAlg != CALG_DSS_SIGN)
+     {
+         FIXME( "bType %u aiKeyAlg %08x not supported\n", hdr->bType, hdr->aiKeyAlg );
+@@ -858,6 +1019,17 @@ BOOL WINAPI CPExportKey( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTKEY hexpkey, DW
+         return FALSE;
+     }
+ 
++    if (key->algid == CALG_DH_EPHEM || (is_dh_algid( key->algid ) && key->dh_p))
++    {
++        if (type != PUBLICKEYBLOB)
++        {
++            FIXME( "private DH key export not supported\n" );
++            SetLastError( NTE_BAD_TYPE );
++            return FALSE;
++        }
++        return export_dh_public_key( key, data, *len, len );
++    }
++
+     return export_key( key, type, data, *len, len );
+ }
+ 
+@@ -913,8 +1085,94 @@ BOOL WINAPI CPGetUserKey( HCRYPTPROV hprov, DWORD keyspec, HCRYPTKEY *ret_key )
+ 
+ BOOL WINAPI CPSetKeyParam( HCRYPTPROV hprov, HCRYPTKEY hkey, DWORD param, BYTE *data, DWORD flags )
+ {
+-    FIXME( "%IX, %IX, %lu, %p, %08lx\n", hprov, hkey, param, data, flags );
+-    SetLastError( ERROR_INVALID_PARAMETER );
++    struct key *key = (struct key *)hkey;
++
++    TRACE( "%IX, %IX, %lu, %p, %08lx\n", hprov, hkey, param, data, flags );
++
++    if (!key || key->magic != MAGIC_KEY)
++    {
++        SetLastError( NTE_BAD_KEY );
++        return FALSE;
++    }
++
++    switch (param)
++    {
++    case KP_P:
++    case KP_G:
++    {
++        const CRYPT_DATA_BLOB *blob = (const CRYPT_DATA_BLOB *)data;
++        DWORD size = key->bitlen / 8;
++        BYTE **dst = (param == KP_P) ? &key->dh_p : &key->dh_g;
++
++        if (!is_dh_algid( key->algid ) || key->handle)
++        {
++            SetLastError( NTE_BAD_KEY_STATE );
++            return FALSE;
++        }
++        if (!blob || !blob->pbData || !blob->cbData || blob->cbData > size)
++        {
++            SetLastError( NTE_BAD_DATA );
++            return FALSE;
++        }
++        free( *dst );
++        if (!(*dst = calloc( 1, size )))
++        {
++            SetLastError( ERROR_NOT_ENOUGH_MEMORY );
++            return FALSE;
++        }
++        memcpy( *dst, blob->pbData, blob->cbData );
++        return TRUE;
++    }
++    case KP_X:
++        if (!is_dh_algid( key->algid ))
++        {
++            SetLastError( NTE_BAD_KEY );
++            return FALSE;
++        }
++        return finish_dh_key( key );
++
++    case KP_ALGID:
++        if (key->algid != CALG_AGREEDKEY_ANY || !data)
++        {
++            SetLastError( NTE_BAD_KEY );
++            return FALSE;
++        }
++        key->session_alg = *(const ALG_ID *)data;
++        FIXME( "agreed key converted to algorithm %08x: encryption with it is not implemented\n",
++               key->session_alg );
++        return TRUE;
++
++    default:
++        FIXME( "%IX, %IX, %lu, %p, %08lx: unsupported parameter\n", hprov, hkey, param, data, flags );
++        SetLastError( ERROR_INVALID_PARAMETER );
++        return FALSE;
++    }
++}
++
++BOOL WINAPI CPGetKeyParam( HCRYPTPROV hprov, HCRYPTKEY hkey, DWORD param, BYTE *data, DWORD *len, DWORD flags )
++{
++    FIXME( "%IX, %IX, %lu, %p, %p, %08lx: stub\n", hprov, hkey, param, data, len, flags );
++    SetLastError( NTE_BAD_TYPE );
++    return FALSE;
++}
++
++BOOL WINAPI CPEncrypt( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTHASH hhash, BOOL final, DWORD flags, BYTE *data,
++                       DWORD *len, DWORD buflen )
++{
++    struct key *key = (struct key *)hkey;
++    FIXME( "%IX, %IX, %IX, %d, %08lx, %p, %p (%lu), %lu: stub, key alg %08x session alg %08x\n", hprov, hkey, hhash,
++           final, flags, data, len, len ? *len : 0, buflen, key ? key->algid : 0, key ? key->session_alg : 0 );
++    SetLastError( NTE_BAD_KEY );
++    return FALSE;
++}
++
++BOOL WINAPI CPDecrypt( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTHASH hhash, BOOL final, DWORD flags, BYTE *data,
++                       DWORD *len )
++{
++    struct key *key = (struct key *)hkey;
++    FIXME( "%IX, %IX, %IX, %d, %08lx, %p, %p (%lu): stub, key alg %08x session alg %08x\n", hprov, hkey, hhash,
++           final, flags, data, len, len ? *len : 0, key ? key->algid : 0, key ? key->session_alg : 0 );
++    SetLastError( NTE_BAD_KEY );
+     return FALSE;
+ }
+ 
