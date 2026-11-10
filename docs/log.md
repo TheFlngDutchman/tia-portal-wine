@@ -35,7 +35,24 @@
     Wine's `wbemprox` answers "not implemented" for both, so .NET tries to
     marshal `IWbemServices` between apartments, and Wine has no proxy/stub for
     it. On Windows these objects are free-threaded.
-  - Proposed fix: `patches/wine/0001-wbemprox-mark-objects-agile.patch` makes the
-    wbemprox locator, services, enumerator and class objects answer
-    `IAgileObject`. `scripts/build-wbemprox.sh` builds it. **Not built or tested
-    yet.**
+  - Fix, two parts, both needed (`scripts/build-wbemprox.sh` applies them):
+    1. `patches/wine/0001-wbemprox-mark-objects-agile.patch`: the wbemprox
+       services object aggregates the free-threaded marshaler, so .NET uses it
+       directly from any apartment.
+    2. DLL override `wminet_utils=builtin`. Microsoft's `WMINet_Utils.dll`
+       (installed with .NET 4.8) wraps the services object in its own COM object
+       that is not free-threaded and needs the `IWbemServices` proxy/stub. Wine's
+       builtin `wminet_utils` does not wrap.
+  - Result with `tests/wmi-sta`, 4 queries per run, 32- and 64-bit:
+
+    | wbemprox | wminet_utils | STA | MTA |
+    |----------|--------------|-----|-----|
+    | stock | Microsoft | 1 OK, 3 fail | 4 OK |
+    | patched | Microsoft | 1 OK, 3 fail | 4 OK |
+    | stock | Wine builtin | 1 OK, 3 fail | 4 OK |
+    | patched | Wine builtin | 4 OK | 4 OK |
+
+  - Notes: Wine 11.20 ignores a replaced builtin DLL in the prefix and did not
+    pick the patched DLL up through `WINEDLLPATH` either, so it is installed as
+    a native override. The `IAgileObject` part of the patch alone had no effect;
+    .NET Framework looks at `IMarshal`.

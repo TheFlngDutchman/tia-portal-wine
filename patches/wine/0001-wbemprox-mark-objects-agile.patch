@@ -19,10 +19,27 @@ index b1e5794..8687a0c 100644
      {
          *ppvObject = &co->IWbemClassObject_iface;
 diff --git i/dlls/wbemprox/services.c w/dlls/wbemprox/services.c
-index 7ca8979..65eb6a0 100644
+index 7ca8979..c1e4b12 100644
 --- i/dlls/wbemprox/services.c
 +++ w/dlls/wbemprox/services.c
-@@ -262,6 +262,7 @@ static HRESULT WINAPI wbem_services_QueryInterface(
+@@ -207,6 +207,7 @@ static HRESULT queue_async( struct async_header *async )
+ struct wbem_services
+ {
+     IWbemServices IWbemServices_iface;
++    IUnknown *marshal;
+     LONG refs;
+     CRITICAL_SECTION cs;
+     enum wbm_namespace ns;
+@@ -247,6 +248,8 @@ static ULONG WINAPI wbem_services_Release(
+         DeleteCriticalSection( &ws->cs );
+         if (ws->context)
+             IWbemContext_Release( ws->context );
++        if (ws->marshal)
++            IUnknown_Release( ws->marshal );
+         free( ws );
+     }
+     return refs;
+@@ -262,6 +265,7 @@ static HRESULT WINAPI wbem_services_QueryInterface(
      TRACE("%p %s %p\n", ws, debugstr_guid( riid ), ppvObject );
  
      if ( IsEqualGUID( riid, &IID_IWbemServices ) ||
@@ -30,6 +47,26 @@ index 7ca8979..65eb6a0 100644
           IsEqualGUID( riid, &IID_IUnknown ) )
      {
          *ppvObject = &ws->IWbemServices_iface;
+@@ -271,6 +275,10 @@ static HRESULT WINAPI wbem_services_QueryInterface(
+         *ppvObject = &client_security;
+         return S_OK;
+     }
++    else if ( IsEqualGUID( riid, &IID_IMarshal ) && ws->marshal )
++    {
++        return IUnknown_QueryInterface( ws->marshal, riid, ppvObject );
++    }
+     else
+     {
+         FIXME("interface %s not implemented\n", debugstr_guid(riid));
+@@ -997,6 +1005,8 @@ HRESULT WbemServices_create( const WCHAR *namespace, IWbemContext *context, LPVO
+     ws->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": wbemprox_services.cs");
+     if (context)
+         IWbemContext_Clone( context, &ws->context );
++    /* WMI objects are free-threaded on Windows; clients use them across apartments. */
++    CoCreateFreeThreadedMarshaler( (IUnknown *)&ws->IWbemServices_iface, &ws->marshal );
+ 
+     *ppObj = &ws->IWbemServices_iface;
+ 
 diff --git i/dlls/wbemprox/wbemlocator.c w/dlls/wbemprox/wbemlocator.c
 index 6e5bdde..0cb6e8c 100644
 --- i/dlls/wbemprox/wbemlocator.c

@@ -9,5 +9,3 @@ export WINEARCH=win64
 export WINEDEBUG="${WINEDEBUG:--all,+err}"
 export TIAWINE_LOGS="${TIAWINE_LOGS:-$TIAWINE_ROOT/logs}"
 export TIA_VERSION="${TIA_VERSION:-V21}"
-# Patched Wine DLLs built by scripts/build-wbemprox.sh, if present.
-if [ -d "$TIAWINE_ROOT/wine-dlls" ]; then export WINEDLLPATH="$TIAWINE_ROOT/wine-dlls"; fi
