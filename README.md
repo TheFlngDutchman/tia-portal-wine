@@ -34,8 +34,8 @@ decompiled code or licence data. You need your own licensed copy of TIA Portal.
 
 | # | Goal | State |
 |---|------|-------|
-| 1 | Wine prefix with .NET Framework 4.8 | in progress |
-| 2 | TIA Portal installer completes | not started (needs the V21 installation media) |
+| 1 | Wine prefix with .NET Framework 4.8 | done |
+| 2 | TIA Portal installer completes | in progress: installer starts, see `docs/log.md` |
 | 3 | Portal starts and shows the start screen | not started |
 | 4 | Open, edit and compile a project offline | not started |
 | 5 | Licence recognised by Automation License Manager | not started |

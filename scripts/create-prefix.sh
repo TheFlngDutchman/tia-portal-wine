@@ -8,8 +8,9 @@ if [ ! -e "$WINEPREFIX/system.reg" ]; then
   WINEDLLOVERRIDES="mscoree=d;mshtml=d" wineboot -i 2>&1 | tee "$TIAWINE_LOGS/wineboot.log"
   wineserver -w
 fi
-winetricks -q win10 2>&1 | tee "$TIAWINE_LOGS/winetricks-win10.log"
 winetricks -q dotnet48 2>&1 | tee "$TIAWINE_LOGS/winetricks-dotnet48.log"
 winetricks -q corefonts vcrun2022 2>&1 | tee "$TIAWINE_LOGS/winetricks-misc.log"
+# dotnet48 leaves the prefix reporting Windows 7; the TIA installer needs Windows 10.
+winetricks -q win10 2>&1 | tee "$TIAWINE_LOGS/winetricks-win10.log"
 wineserver -w
 echo "prefix ready: $WINEPREFIX"
