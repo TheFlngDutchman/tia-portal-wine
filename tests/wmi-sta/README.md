@@ -13,4 +13,4 @@ wine WmiTest.exe mta 4     # all four OK
 ```
 
 Expected on Windows: every query succeeds in both modes. With the fix from
-`scripts/build-wbemprox.sh` the same holds under Wine.
+`scripts/build-wine-patches.sh` the same holds under Wine.

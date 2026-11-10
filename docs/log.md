@@ -35,7 +35,7 @@
     Wine's `wbemprox` answers "not implemented" for both, so .NET tries to
     marshal `IWbemServices` between apartments, and Wine has no proxy/stub for
     it. On Windows these objects are free-threaded.
-  - Fix, two parts, both needed (`scripts/build-wbemprox.sh` applies them):
+  - Fix, two parts, both needed (`scripts/build-wine-patches.sh` applies them):
     1. `patches/wine/0001-wbemprox-mark-objects-agile.patch`: the wbemprox
        services object aggregates the free-threaded marshaler, so .NET uses it
        directly from any apartment.
@@ -106,3 +106,18 @@
      channel registration fails.
 - Script note: with the Siemens services installed, `wineserver -w` never
   returns, because the services keep the session alive.
+- "Channel is not registered", found with REA's static .NET inspection
+  (`rea inspect-managed-members` on `Siemens.Automation.CommonServices.dll`,
+  type `IpcConnectionManager`; no code was run or decompiled): after
+  registering its .NET Remoting IPC channel, Portal verifies it with
+  `File.Exists("\\.\pipe\<name>")`. On Windows that returns true for an existing
+  named pipe; under Wine 11.20 it returns false.
+  - Reproduced in `tests/pipe-exists`.
+  - Fix: `patches/wine/0003-kernelbase-attributes-of-named-pipes.patch` makes
+    `GetFileAttributesExW` succeed for an existing pipe. The patched
+    `kernelbase.dll` is installed as a native override by
+    `scripts/build-wine-patches.sh` (renamed from `build-wbemprox.sh`).
+- Result: `Siemens.Automation.Portal.exe` starts and shows its main window
+  (project view with menu bar, toolbar and project tree). No startup exception
+  in three minutes. Not yet checked: rendering of all panes, opening and
+  compiling a project, licensing behaviour without the licence manager.

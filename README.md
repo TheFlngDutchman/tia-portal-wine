@@ -2,7 +2,9 @@
 
 An experiment: can Siemens TIA Portal V21 run on Linux under [Wine](https://www.winehq.org/)?
 
-**Status: early investigation. TIA Portal does not run yet.** There is no published
+**Status: experimental. TIA Portal V21 installs (with failures) and its main
+window starts; nothing beyond that is verified, and the licence manager does not
+run.** There is no published
 working setup for any recent TIA Portal version under Wine, and Siemens supports
 Windows only. This repository records what was tried, what broke, and why, so that
 the work is reproducible and others can pick it up.
@@ -36,8 +38,8 @@ decompiled code or licence data. You need your own licensed copy of TIA Portal.
 |---|------|-------|
 | 1 | Wine prefix with .NET Framework 4.8 | done |
 | 2 | TIA Portal installer completes | mostly: 54 of 58 packages install; drivers, licence manager and ProSave fail |
-| 3 | Portal starts and shows the start screen | in progress: starts, then fails registering its IPC channel |
-| 4 | Open, edit and compile a project offline | not started |
+| 3 | Portal starts and shows its main window | reached with the three Wine patches in `patches/wine` |
+| 4 | Open, edit and compile a project offline | being tried |
 | 5 | Licence recognised by Automation License Manager | blocked: the ALM service crashes on start |
 | 6 | Go online / download to a PLC over Ethernet | not started, expected to be the hardest |
 
@@ -54,7 +56,7 @@ Requirements: Arch Linux (or similar) with `wine`, `winetricks`, `cabextract`,
 . scripts/env.sh               # paths; override via environment variables
 scripts/mount-storage.sh       # optional: ext4 image on an exFAT/NTFS drive
 scripts/create-prefix.sh       # 64-bit prefix + .NET Framework 4.8
-scripts/build-wbemprox.sh      # patched Wine WMI DLLs (see patches/wine)
+scripts/build-wine-patches.sh      # patched Wine WMI DLLs (see patches/wine)
 scripts/mount-windows-ro.sh    # optional: inspect a dual-boot install, read-only
 scripts/inventory.sh
 ```

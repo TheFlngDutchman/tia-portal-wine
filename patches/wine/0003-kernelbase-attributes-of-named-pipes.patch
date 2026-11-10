@@ -1,0 +1,51 @@
+diff --git i/dlls/kernelbase/file.c w/dlls/kernelbase/file.c
+index 7b0f0a6..c525065 100644
+--- i/dlls/kernelbase/file.c
++++ w/dlls/kernelbase/file.c
+@@ -1824,6 +1824,33 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetFileAttributesExA( LPCSTR name, GET_FILEEX_INFO
+ /**************************************************************************
+  *	GetFileAttributesExW   (kernelbase.@)
+  */
++/* Named pipes have no file attributes in Wine, but on Windows querying the
++ * attributes of an existing pipe succeeds (it connects to the pipe and closes
++ * it again). Applications use this to test whether a pipe exists. */
++static BOOL named_pipe_exists( UNICODE_STRING *nt_name )
++{
++    static const WCHAR prefix[] = L"\\??\\pipe\\";
++    const ULONG prefix_len = ARRAY_SIZE(prefix) - 1;
++    OBJECT_ATTRIBUTES attr;
++    IO_STATUS_BLOCK io;
++    NTSTATUS status;
++    HANDLE handle;
++
++    if (nt_name->Length <= prefix_len * sizeof(WCHAR)) return FALSE;
++    if (wcsnicmp( nt_name->Buffer, prefix, prefix_len )) return FALSE;
++
++    InitializeObjectAttributes( &attr, nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
++    status = NtOpenFile( &handle, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &attr, &io,
++                         FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT );
++    if (!status)
++    {
++        NtClose( handle );
++        return TRUE;
++    }
++    return status == STATUS_PIPE_NOT_AVAILABLE || status == STATUS_INSTANCE_NOT_AVAILABLE ||
++           status == STATUS_PIPE_BUSY || status == STATUS_ACCESS_DENIED;
++}
++
+ BOOL WINAPI DECLSPEC_HOTPATCH GetFileAttributesExW( LPCWSTR name, GET_FILEEX_INFO_LEVELS level, void *ptr )
+ {
+     FILE_NETWORK_OPEN_INFORMATION info;
+@@ -1848,6 +1875,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetFileAttributesExW( LPCWSTR name, GET_FILEEX_INF
+ 
+     InitializeObjectAttributes( &attr, &nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
+     status = NtQueryFullAttributesFile( &attr, &info );
++    if (status && named_pipe_exists( &nt_name ))
++    {
++        memset( &info, 0, sizeof(info) );
++        info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
++        status = STATUS_SUCCESS;
++    }
+     RtlFreeUnicodeString( &nt_name );
+     if (!set_ntstatus( status )) return FALSE;
+ 
