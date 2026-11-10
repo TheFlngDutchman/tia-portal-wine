@@ -24,7 +24,7 @@ index fb83aed..eea2a50 100644
  @ stdcall CPGetUserKey(ptr long ptr)
  @ stdcall CPHashData(ptr ptr ptr long long)
 diff --git i/dlls/dssenh/main.c w/dlls/dssenh/main.c
-index 5634168..d54f3c8 100644
+index 5634168..defc262 100644
 --- i/dlls/dssenh/main.c
 +++ w/dlls/dssenh/main.c
 @@ -45,8 +45,25 @@ struct key
@@ -254,7 +254,7 @@ index 5634168..d54f3c8 100644
      return export_key( key, type, data, *len, len );
  }
  
-@@ -911,11 +1087,277 @@ BOOL WINAPI CPGetUserKey( HCRYPTPROV hprov, DWORD keyspec, HCRYPTKEY *ret_key )
+@@ -911,11 +1087,280 @@ BOOL WINAPI CPGetUserKey( HCRYPTPROV hprov, DWORD keyspec, HCRYPTKEY *ret_key )
      return ret;
  }
  
@@ -291,6 +291,7 @@ index 5634168..d54f3c8 100644
 +    memset( key->chain, 0, sizeof(key->chain) );
 +    key->session_alg = algid;
 +    key->have_cipher = TRUE;
++    TRACE( "agreed key converted to algorithm %08x\n", algid );
 +    return TRUE;
 +}
 +
@@ -519,6 +520,7 @@ index 5634168..d54f3c8 100644
 +    pad = data[*len - 1];
 +    if (!pad || pad > 8)
 +    {
++        WARN( "invalid padding after decrypting %lu bytes\n", *len );
 +        SetLastError( NTE_BAD_DATA );
 +        return FALSE;
 +    }
@@ -531,6 +533,7 @@ index 5634168..d54f3c8 100644
 +        }
 +    }
 +    *len -= pad;
++    TRACE( "decrypted %lu bytes\n", *len );
 +    return TRUE;
  }
  
