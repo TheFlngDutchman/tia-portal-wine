@@ -56,3 +56,20 @@
     pick the patched DLL up through `WINEDLLPATH` either, so it is installed as
     a native override. The `IAgileObject` part of the patch alone had no effect;
     .NET Framework looks at `IMarshal`.
+- Third installer run, with the WMI fix: the wizard runs through to the
+  installation phase (defaults everywhere) and starts installing packages.
+  After about 20 minutes: 6.6 GB under `Program Files\Siemens`, and several
+  Siemens services are running under Wine (`S7TraceService64X`, `s7oiehsx64`,
+  `S7EpaSRV64x`, TIA Help Viewer service, user management `IPCSecCom`).
+  - Kernel drivers fail to load, as expected, and the installer carries on:
+    `dpmconv`, `vsnl2ada` and the `s7o*` drivers need `WDFLDR.SYS` (the Windows
+    Driver Framework loader, which Wine does not have); one driver calls the
+    unimplemented `ntoskrnl.exe.IoOpenDeviceInterfaceRegistryKey`.
+  - Also seen: unimplemented `msi.dll.MsiExtractPatchXMLDataW`.
+  - The Automation License Manager package stops with the dialog "Failed to
+    start the service, Error:1460, Timeout." The service `almservice`
+    (`almsrv64x.exe`) starts, logs "No Listen-Socket has been set!, os error
+    code = 10057" to the event log, then crashes with a page fault (read of
+    address 0x18). Cause not yet known; needs a winsock trace of the service in
+    a fresh Wine session. TCP port 4410 on 127.0.0.1 was already in a listening
+    state inside the same Wine session at that moment.
