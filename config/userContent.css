@@ -1,0 +1,12 @@
+/* User style sheet for Wine's HTML engine (Gecko).
+ * Install as: <prefix>/drive_c/users/<user>/AppData/Roaming/wine_gecko/chrome/userContent.css
+ *
+ * Pages embedded in Siemens tools size some elements with Internet Explorer's
+ * "height: expression(...)" CSS, which Gecko ignores, so those elements end up
+ * zero pixels high. The rules below give the same result in standard CSS.
+ */
+@-moz-document url-prefix("res://") {
+    /* Automation License Manager, key list:
+       height: expression(document.body.clientHeight - 54); top: 54px */
+    #FileList { height: calc(100% - 54px) !important; }
+}

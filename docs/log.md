@@ -328,3 +328,15 @@
   unreadable Portal crash-report window.
 - User observation: the licence manager does report that upgrade licences were
   found on the licence volume.
+- Licence manager key list: the page embeds an ActiveX control
+  (`<object id="FileList" classid=...>`, provided by `almaxc64x.dll`). Wine's
+  mshtml creates and embeds it, but with zero height: the page sizes it with
+  `height: expression(document.body.clientHeight - 54)`, an Internet
+  Explorer-only CSS feature that Gecko ignores.
+  - `patches/wine/0010-mshtml-user-chrome-directory.patch`: Wine's Gecko asked
+    for its user chrome directory ("UChrm") and got an error, so it never
+    loaded `userContent.css`. It now gets `<profile>\chrome`.
+  - `config/userContent.css` gives the control `height: calc(100% - 54px)`.
+  - Result: the key list is visible. With the licence volume selected it shows
+    seven keys with product, version, key name and licence number, matching
+    the "7 License key(s)" in the status bar.

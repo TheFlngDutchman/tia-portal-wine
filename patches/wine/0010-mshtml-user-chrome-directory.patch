@@ -1,0 +1,39 @@
+diff --git i/dlls/mshtml/nsembed.c w/dlls/mshtml/nsembed.c
+index 62e1922..67cf1c7 100644
+--- i/dlls/mshtml/nsembed.c
++++ w/dlls/mshtml/nsembed.c
+@@ -296,6 +296,34 @@ static nsresult NSAPI nsDirectoryServiceProvider2_GetFile(nsIDirectoryServicePro
+         return nsIFile_Clone(profile_directory, _retval);
+     }
+ 
++    /* user chrome directory: lets Gecko find <profile>\chrome\userContent.css */
++    if(!strcmp(prop, "UChrm")) {
++        nsAString name;
++        nsIFile *file;
++        nsresult nsres;
++
++        if(!profile_directory) {
++            nsres = create_profile_directory();
++            if(NS_FAILED(nsres))
++                return nsres;
++        }
++
++        nsres = nsIFile_Clone(profile_directory, &file);
++        if(NS_FAILED(nsres))
++            return nsres;
++
++        nsAString_InitDepend(&name, L"chrome");
++        nsres = nsIFile_Append(file, &name);
++        nsAString_Finish(&name);
++        if(NS_FAILED(nsres)) {
++            nsIFile_Release(file);
++            return nsres;
++        }
++
++        *_retval = file;
++        return NS_OK;
++    }
++
+     *_retval = NULL;
+     return NS_ERROR_FAILURE;
+ }

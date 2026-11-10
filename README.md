@@ -40,7 +40,7 @@ decompiled code or licence data. You need your own licensed copy of TIA Portal.
 | 2 | TIA Portal installer completes | mostly: 54 of 58 packages install; drivers, licence manager and ProSave fail |
 | 3 | Portal starts and shows its main window | reached with the Wine patches in `patches/wine` |
 | 4 | Open, edit and compile a project offline | partly: a new project can be created; opening an existing one reaches the product check. Editing and compiling not tested |
-| 5 | Licence recognised by Automation License Manager | blocked: the ALM service crashes on start |
+| 5 | Licence recognised by Automation License Manager | partly: the service and its window run and list the keys on a mounted licence volume; whether Portal accepts them is open |
 | 6 | Go online / download to a PLC over Ethernet | not started, expected to be the hardest |
 
 Goal 6 depends on Siemens kernel-mode network drivers, which Wine cannot load.
@@ -67,6 +67,9 @@ know when switching an existing prefix to it:
 
 - Write `disable` into `<prefix>/.update-timestamp`. Otherwise the first start
   runs a prefix update, which left .NET applications unable to start here.
+- Copy `config/userContent.css` to
+  `<prefix>/drive_c/users/<user>/AppData/Roaming/wine_gecko/chrome/` (needs
+  patch 0010). It replaces Internet Explorer-only CSS in embedded Siemens pages.
 - Set the DLL override `wminet_utils=builtin`, so that Wine's `wminet_utils`
   is used instead of the one .NET 4.8 installs.
 
