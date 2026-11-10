@@ -10,6 +10,11 @@ if [ ! -e "$WINEPREFIX/system.reg" ]; then
 fi
 winetricks -q dotnet48 2>&1 | tee "$TIAWINE_LOGS/winetricks-dotnet48.log"
 winetricks -q corefonts vcrun2022 2>&1 | tee "$TIAWINE_LOGS/winetricks-misc.log"
+# winetricks creates the prefix with mshtml disabled, so Wine's HTML component
+# is never registered. Siemens tools (the licence manager's key list, for one)
+# show their content in an embedded browser control and stay blank without it.
+wine regsvr32 /s mshtml.dll
+wine 'C:\windows\syswow64\regsvr32.exe' /s mshtml.dll
 # dotnet48 leaves the prefix reporting Windows 7; the TIA installer needs Windows 10.
 winetricks -q win10 2>&1 | tee "$TIAWINE_LOGS/winetricks-win10.log"
 wineserver -w

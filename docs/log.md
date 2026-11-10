@@ -316,3 +316,15 @@
   lists the drives, including the licence volume `G:`. With `G:` selected the
   key list is empty. The launcher `almapp64x.exe` still logs one null-pointer
   fault and two unregistered COM classes. Start it with `scripts/start-alm.sh`.
+- The licence manager's right-hand pane was blank. It is an embedded browser
+  control ("HtmlView": WebView2 first, hidden; then the Internet Explorer
+  control) showing a `res://` page from `almgui64x.exe`. Navigation failed with
+  `MK_E_SYNTAX` because `mshtml.dll` was never registered in this prefix:
+  the prefix was created with `mshtml` disabled (winetricks does that), so the
+  `res:` protocol handler and the rest of Wine's HTML component were missing.
+  `regsvr32 mshtml.dll` (64- and 32-bit) fixes it; Wine Gecko from the system
+  package is picked up. The pane now renders ("License keys - <drive>").
+  `create-prefix.sh` registers `mshtml` from now on. This may also explain the
+  unreadable Portal crash-report window.
+- User observation: the licence manager does report that upgrade licences were
+  found on the licence volume.
