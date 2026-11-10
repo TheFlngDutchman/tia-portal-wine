@@ -35,10 +35,10 @@ decompiled code or licence data. You need your own licensed copy of TIA Portal.
 | # | Goal | State |
 |---|------|-------|
 | 1 | Wine prefix with .NET Framework 4.8 | done |
-| 2 | TIA Portal installer completes | in progress: installer starts, see `docs/log.md` |
-| 3 | Portal starts and shows the start screen | not started |
+| 2 | TIA Portal installer completes | mostly: 54 of 58 packages install; drivers, licence manager and ProSave fail |
+| 3 | Portal starts and shows the start screen | in progress: starts, then fails registering its IPC channel |
 | 4 | Open, edit and compile a project offline | not started |
-| 5 | Licence recognised by Automation License Manager | not started |
+| 5 | Licence recognised by Automation License Manager | blocked: the ALM service crashes on start |
 | 6 | Go online / download to a PLC over Ethernet | not started, expected to be the hardest |
 
 Goal 6 depends on Siemens kernel-mode network drivers, which Wine cannot load.
@@ -48,12 +48,13 @@ It may turn out to be impossible without a different approach. See
 ## Quick start
 
 Requirements: Arch Linux (or similar) with `wine`, `winetricks`, `cabextract`,
-`hivex`, and about 100 GB of space on a Linux filesystem.
+`hivex`, `samba` (for `ntlm_auth`), `mingw-w64-gcc`, and about 100 GB of space on a Linux filesystem.
 
 ```bash
 . scripts/env.sh               # paths; override via environment variables
 scripts/mount-storage.sh       # optional: ext4 image on an exFAT/NTFS drive
 scripts/create-prefix.sh       # 64-bit prefix + .NET Framework 4.8
+scripts/build-wbemprox.sh      # patched Wine WMI DLLs (see patches/wine)
 scripts/mount-windows-ro.sh    # optional: inspect a dual-boot install, read-only
 scripts/inventory.sh
 ```

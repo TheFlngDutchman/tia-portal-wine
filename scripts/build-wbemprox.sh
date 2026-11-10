@@ -13,7 +13,8 @@ for p in "$repo"/patches/wine/*.patch; do
 done
 mkdir -p "$build" && cd "$build"
 [ -f Makefile ] || "$src/configure" --enable-archs=i386,x86_64 --disable-tests
-make -j"$(nproc)" dlls/wbemprox/x86_64-windows/wbemprox.dll dlls/wbemprox/i386-windows/wbemprox.dll
+make -j"$(nproc)" dlls/wbemprox/x86_64-windows/wbemprox.dll dlls/wbemprox/i386-windows/wbemprox.dll \
+  dlls/wminet_utils/x86_64-windows/wminet_utils.dll dlls/wminet_utils/i386-windows/wminet_utils.dll
 # Wine always loads its own builtin wbemprox from the Wine installation, even
 # if the copy in the prefix is replaced. So the patched build is installed as a
 # "native" DLL: the builtin marker in the DOS header is cleared and a DLL
@@ -27,8 +28,16 @@ install_native dlls/wbemprox/x86_64-windows/wbemprox.dll "$win/system32/wbem/wbe
 install_native dlls/wbemprox/i386-windows/wbemprox.dll "$win/syswow64/wbem/wbemprox.dll"
 wine reg add 'HKCU\Software\Wine\DllOverrides' /v wbemprox /d native,builtin /f >/dev/null
 # .NET 4.8 ships its own WMINet_Utils.dll, which wraps WMI objects and relies on
-# a proxy/stub for IWbemServices that Wine does not have. Wine's builtin
-# wminet_utils passes the objects through unwrapped.
-wine reg add 'HKCU\Software\Wine\DllOverrides' /v wminet_utils /d builtin /f >/dev/null
-wineserver -w
-echo "patched wbemprox installed into $WINEPREFIX"
+# a proxy/stub for IWbemServices that Wine does not have. Wine's wminet_utils
+# passes the objects through unwrapped; the patched build (which adds functions
+# TIA Portal calls) replaces Microsoft's file in the .NET directories. The
+# original is kept next to it as WMINet_Utils.dll.ms-orig.
+for pair in "x86_64 Framework64" "i386 Framework"; do
+  set -- $pair
+  dst="$win/Microsoft.NET/$2/v4.0.30319/WMINet_Utils.dll"
+  [ -e "$dst.ms-orig" ] || cp "$dst" "$dst.ms-orig"
+  install_native "dlls/wminet_utils/$1-windows/wminet_utils.dll" "$dst"
+done
+wine reg add 'HKCU\Software\Wine\DllOverrides' /v wminet_utils /d native,builtin /f >/dev/null
+wineserver -k || true
+echo "patched wbemprox and wminet_utils installed into $WINEPREFIX"

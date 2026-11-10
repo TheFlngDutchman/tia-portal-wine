@@ -73,3 +73,36 @@
     address 0x18). Cause not yet known; needs a winsock trace of the service in
     a fresh Wine session. TCP port 4410 on 127.0.0.1 was already in a listening
     state inside the same Wine session at that moment.
+- Installer finished with exit code 1603 and "An error occurred during setup".
+  Per-package result: 54 of 58 setup units complete, including `TIA_Portal_All`,
+  `Step7_All`, `Step7_Safety`, `WinCC`, `WinCCUnified_ES`. Failed: `S7DOS64`
+  and `CoRtHmiRTmDriver64` (kernel drivers), `LicenseManager`, `Prosave`. Five
+  "SecurityControl" steps also report errors. Installed size about 15 GB.
+  - Near the end, "Set PG/PC Interface" (`S7epatsx.exe /Silent`) opens its
+    dialogs with an empty interface list, and the final report step calls
+    `regedit /a`, which Wine's regedit rejects. Both can be dismissed.
+- Automation License Manager service, traced in a fresh session:
+  - Startup is slow because it waits for the COM local server
+    `{2255B183-A6E6-476E-8098-283BF4C5CBC6}` ("LicenseTransfer Object",
+    `ALMPANELPLUGIN.EXE`); Wine fails to marshal `IClassFactory2` for it. This
+    delay is what produced the installer's "Error 1460, Timeout".
+  - It then reports RUNNING, opens its listener on 127.0.0.1:4410, and crashes.
+    Its two database files in `ProgramData\...\Automation License Manager\logging`
+    are 0 bytes; it treats them as corrupt, tries to copy each to
+    `*.backup_corrupt` without overwrite, the copy fails because that file
+    already exists, a `std::filesystem::filesystem_error` is thrown, and the
+    process dies with a page fault. Why the databases never get initialised
+    under Wine is not known yet.
+- First start of `Siemens.Automation.Portal.exe`:
+  1. Aborted in `wminet_utils.dll.SetSecurity`, a stub in Wine's builtin.
+     `patches/wine/0002-wminet_utils-implement-more-functions.patch` implements
+     it and nine more functions; the build script now installs this build in
+     place of Microsoft's `WMINet_Utils.dll` (original kept as `.ms-orig`).
+  2. With that, Portal gets further and stops with
+     `InvalidOperationException: Channel is not registered` in
+     `IpcConnectionManager.RegisterChannel` (a .NET Remoting IPC channel),
+     wrapped in a `DlcManagerInitException`. Installing `samba` for `ntlm_auth`
+     removed a Wine warning but not this error. Next step: find out why the
+     channel registration fails.
+- Script note: with the Siemens services installed, `wineserver -w` never
+  returns, because the services keep the session alive.

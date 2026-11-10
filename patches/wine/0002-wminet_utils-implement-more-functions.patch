@@ -1,0 +1,130 @@
+diff --git i/dlls/wminet_utils/main.c w/dlls/wminet_utils/main.c
+index 6b1450d..dbdf6cf 100644
+--- i/dlls/wminet_utils/main.c
++++ w/dlls/wminet_utils/main.c
+@@ -230,3 +230,72 @@ IErrorInfo* WINAPI wminet_utils_GetErrorInfo(void)
+ 
+     return error_info;
+ }
++
++HRESULT WINAPI SetSecurity(BOOL *pNeedtoReset, HANDLE *pHandle)
++{
++    /* Native enables all privileges on the calling thread and returns a
++     * token to restore them later. Wine has no privilege checks to satisfy. */
++    TRACE("%p %p\n", pNeedtoReset, pHandle);
++
++    if (pNeedtoReset) *pNeedtoReset = FALSE;
++    if (pHandle) *pHandle = NULL;
++    return S_OK;
++}
++
++HRESULT WINAPI ResetSecurity(HANDLE handle)
++{
++    TRACE("%p\n", handle);
++    return S_OK;
++}
++
++HRESULT WINAPI BlessIWbemServices(IWbemServices *pIUnknown, BSTR strUser, void *password,
++    BSTR strAuthority, DWORD impLevel, DWORD authLevel)
++{
++    FIXME("%p %s %p %s %lx %lx: semi-stub\n", pIUnknown, debugstr_w(strUser), password,
++        debugstr_w(strAuthority), impLevel, authLevel);
++    return S_OK;
++}
++
++HRESULT WINAPI BlessIWbemServicesObject(IUnknown *pIUnknown, BSTR strUser, void *password,
++    BSTR strAuthority, DWORD impLevel, DWORD authLevel)
++{
++    FIXME("%p %s %p %s %lx %lx: semi-stub\n", pIUnknown, debugstr_w(strUser), password,
++        debugstr_w(strAuthority), impLevel, authLevel);
++    return S_OK;
++}
++
++HRESULT WINAPI Clone(int vFunc, IWbemClassObject *ptr, IWbemClassObject **ppCopy)
++{
++    TRACE("%i %p %p\n", vFunc, ptr, ppCopy);
++    return IWbemClassObject_Clone(ptr, ppCopy);
++}
++
++HRESULT WINAPI SpawnInstance(int vFunc, IWbemClassObject *ptr, LONG lFlags, IWbemClassObject **ppNewInstance)
++{
++    TRACE("%i %p %lx %p\n", vFunc, ptr, lFlags, ppNewInstance);
++    return IWbemClassObject_SpawnInstance(ptr, lFlags, ppNewInstance);
++}
++
++HRESULT WINAPI GetQualifierSet(int vFunc, IWbemClassObject *ptr, IWbemQualifierSet **ppQualSet)
++{
++    TRACE("%i %p %p\n", vFunc, ptr, ppQualSet);
++    return IWbemClassObject_GetQualifierSet(ptr, ppQualSet);
++}
++
++HRESULT WINAPI EndEnumeration(int vFunc, IWbemClassObject *ptr)
++{
++    TRACE("%i %p\n", vFunc, ptr);
++    return IWbemClassObject_EndEnumeration(ptr);
++}
++
++HRESULT WINAPI InheritsFrom(int vFunc, IWbemClassObject *ptr, LPCWSTR strAncestor)
++{
++    TRACE("%i %p %s\n", vFunc, ptr, debugstr_w(strAncestor));
++    return IWbemClassObject_InheritsFrom(ptr, strAncestor);
++}
++
++HRESULT WINAPI CompareTo(int vFunc, IWbemClassObject *ptr, LONG lFlags, IWbemClassObject *pCompareTo)
++{
++    TRACE("%i %p %lx %p\n", vFunc, ptr, lFlags, pCompareTo);
++    return IWbemClassObject_CompareTo(ptr, lFlags, pCompareTo);
++}
+diff --git i/dlls/wminet_utils/wminet_utils.spec w/dlls/wminet_utils/wminet_utils.spec
+index 9695332..db3217f 100644
+--- i/dlls/wminet_utils/wminet_utils.spec
++++ w/dlls/wminet_utils/wminet_utils.spec
+@@ -1,10 +1,10 @@
+ @ stdcall BeginEnumeration(long ptr long)
+ @ stdcall BeginMethodEnumeration(long ptr long)
+-@ stub BlessIWbemServices
+-@ stub BlessIWbemServicesObject
+-@ stub Clone
++@ stdcall BlessIWbemServices(ptr wstr ptr wstr long long)
++@ stdcall BlessIWbemServicesObject(ptr wstr ptr wstr long long)
++@ stdcall Clone(long ptr ptr)
+ @ stdcall CloneEnumWbemClassObject(ptr long long ptr wstr wstr wstr)
+-@ stub CompareTo
++@ stdcall CompareTo(long ptr long ptr)
+ @ stdcall ConnectServerWmi(wstr wstr wstr wstr long wstr ptr ptr long long)
+ @ stub CreateClassEnumWmi
+ @ stdcall CreateInstanceEnumWmi(wstr long ptr ptr long long ptr wstr wstr wstr)
+@@ -14,7 +14,7 @@
+ @ stub DllGetClassObject
+ @ stub DllRegisterServer
+ @ stub DllUnregisterServer
+-@ stub EndEnumeration
++@ stdcall EndEnumeration(long ptr)
+ @ stdcall EndMethodEnumeration(long ptr)
+ @ stub ExecNotificationQueryWmi
+ @ stdcall ExecQueryWmi(wstr wstr long ptr ptr long long ptr wstr wstr wstr)
+@@ -31,8 +31,8 @@
+ @ stub GetPropertyInfoByHandle
+ @ stub GetPropertyOrigin
+ @ stdcall GetPropertyQualifierSet(long ptr wstr ptr)
+-@ stub GetQualifierSet
+-@ stub InheritsFrom
++@ stdcall GetQualifierSet(long ptr ptr)
++@ stdcall InheritsFrom(long ptr wstr)
+ @ stdcall Initialize(long)
+ @ stub Lock
+ @ stdcall Next(long ptr long wstr ptr ptr ptr)
+@@ -51,10 +51,10 @@
+ @ stub ReadDWORD
+ @ stub ReadPropertyValue
+ @ stub ReadQWORD
+-@ stub ResetSecurity
+-@ stub SetSecurity
++@ stdcall ResetSecurity(ptr)
++@ stdcall SetSecurity(ptr ptr)
+ @ stub SpawnDerivedClass
+-@ stub SpawnInstance
++@ stdcall SpawnInstance(long ptr long ptr)
+ @ stub UFunc
+ @ stub Unlock
+ @ stub VerifyClientKey
