@@ -121,3 +121,24 @@
   (project view with menu bar, toolbar and project tree). No startup exception
   in three minutes. Not yet checked: rendering of all panes, opening and
   compiling a project, licensing behaviour without the licence manager.
+- Portal start-up time is similar to Windows (user observation). Opening an
+  existing project and creating a new one both stay on the progress dialog
+  indefinitely; Portal is idle while it waits.
+  - Cause: Portal's project storage runs in a helper process,
+    `Siemens.Automation.ObjectFrame.FileStorage.Server.exe`. It fails at start
+    with `CryptographicException: Unknown error -2146893783` (0x80090029,
+    `NTE_NOT_SUPPORTED`) from `ECDiffieHellmanCng.get_Key` ->
+    `CngKey.Create` -> `NCryptCreatePersistedKey`. The helper sets up an
+    ECDH + AES protected link to its clients; Wine 11.20's `ncrypt` has no ECDH
+    support ("Algorithm not handled"). Portal then waits for a server that never
+    comes up. Source: Portal's own diagnostic report under
+    `ProgramData\Siemens\Automation\Portal V21\Diagnostics`.
+  - Not a product or hardware-catalog problem: it affects a new empty project
+    too. The test project also uses G120C drives, and Startdrive is not part of
+    the installed bundle, so that will matter once projects open at all.
+  - Next: implement ECDH (create/finalize key, export/import public key, secret
+    agreement, key derivation) in Wine's `ncrypt` on top of `bcrypt`, with a
+    C# test using `ECDiffieHellmanCng`.
+- Debugging note: attaching `winedbg` with `bt all` causes "page fault on
+  execute access to FFBB11B0" lines in other processes; those are an artefact of
+  the debugger, not of the application.
