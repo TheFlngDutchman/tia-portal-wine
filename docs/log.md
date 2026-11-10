@@ -340,3 +340,11 @@
   - Result: the key list is visible. With the licence volume selected it shows
     seven keys with product, version, key name and licence number, matching
     the "7 License key(s)" in the status bar.
+- Key list without context menu, "Upgrade" greyed out (user observation): the
+  licence manager asks the `<object>` element for `IConnectionPointContainer`
+  to subscribe to the embedded control's events. Wine's mshtml answered with
+  the element's own container, whose `EnumConnectionPoints` is a stub, so the
+  application never learned about selections or right clicks in the list.
+  `patches/wine/0011-mshtml-object-element-forwards-connection-points.patch`
+  asks the embedded control first. The trace now shows the control's container
+  being returned; the effect in the window still has to be confirmed.

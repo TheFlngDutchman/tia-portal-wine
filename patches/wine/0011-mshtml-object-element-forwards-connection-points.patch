@@ -1,0 +1,33 @@
+diff --git i/dlls/mshtml/htmlobject.c w/dlls/mshtml/htmlobject.c
+index be567e8..ffc7ce7 100644
+--- i/dlls/mshtml/htmlobject.c
++++ w/dlls/mshtml/htmlobject.c
+@@ -660,6 +660,7 @@ static void *HTMLObjectElement_query_interface(DispatchEx *dispex, REFIID riid)
+ {
+     HTMLObjectElement *This = impl_from_DispatchEx(dispex);
+     void *elem_iface;
++    BOOL is_cpc;
+ 
+     if(IsEqualGUID(&IID_IHTMLObjectElement, riid))
+         return &This->IHTMLObjectElement_iface;
+@@ -672,7 +673,10 @@ static void *HTMLObjectElement_query_interface(DispatchEx *dispex, REFIID riid)
+         return &This->plugin_container;
+     }
+ 
+-    elem_iface = HTMLElement_query_interface(&This->plugin_container.element.node.event_target.dispex, riid);
++    /* A host that asks the object element for its connection points wants the
++     * events of the embedded control, so the control is asked first. */
++    is_cpc = IsEqualGUID(&IID_IConnectionPointContainer, riid);
++    elem_iface = is_cpc ? NULL : HTMLElement_query_interface(&This->plugin_container.element.node.event_target.dispex, riid);
+     if(!elem_iface && This->plugin_container.plugin_host && This->plugin_container.plugin_host->plugin_unk) {
+         IUnknown *plugin_iface;
+         HRESULT hres = IUnknown_QueryInterface(This->plugin_container.plugin_host->plugin_unk, riid, (void**)&plugin_iface);
+@@ -696,6 +700,8 @@ static void *HTMLObjectElement_query_interface(DispatchEx *dispex, REFIID riid)
+         }
+     }
+ 
++    if(is_cpc)
++        elem_iface = HTMLElement_query_interface(&This->plugin_container.element.node.event_target.dispex, riid);
+     return elem_iface;
+ }
+ 
