@@ -171,3 +171,19 @@
     `TiaPersistenceOpenFailedWithProductInfoException: Required project
     elements are missing`. Whether Portal on Windows survives this case is not
     known here; under Wine it ends the session.
+- Automation License Manager, clean start (the stale 0-byte database files from
+  the first failed start removed): the service now gets through database
+  setup, scans all drive letters for licence key folders, and then aborts.
+  - Cause: it asks the "Microsoft Enhanced DSS and Diffie-Hellman Cryptographic
+    Provider" for an ephemeral Diffie-Hellman key,
+    `CryptGenKey(CALG_DH_EPHEM, 512 bit | CRYPT_PREGEN)`. Wine 11.20's `dssenh`
+    answers `unhandled algorithm 0000aa02`; the service throws a C++ exception
+    inside a `noexcept` function and terminates.
+  - The earlier "databases are corrupt" crash was a follow-up of this one: the
+    abort happens in the middle of the first database transaction and leaves
+    empty files behind, which the next start trips over.
+  - What a fix needs: classic CryptoAPI Diffie-Hellman in `dssenh` (generate
+    with pre-set P and G, export/import public key blobs, agreed key converted
+    to a session key) and, most likely, the symmetric encrypt/decrypt entry
+    points, which `dssenh` does not have at all. Wine's `bcrypt` has DH, so the
+    arithmetic exists. Not started.
