@@ -268,3 +268,19 @@
   restarts it about 90 times in a minute; no window appears, and one instance
   dies calling a null pointer. `winedbg` cannot start or attach to these
   programs; that is left alone.
+- Complete custom Wine 11.20 built with patches 0001-0008
+  (`scripts/build-wine.sh`, run from the build tree).
+  - Switching the existing prefix to it with `wineboot -u` broke it: .NET
+    programs showed "This application could not be started". Restored the
+    post-install snapshot instead and disabled prefix updates
+    (`.update-timestamp` = `disable`); the versions are identical, so no update
+    is needed. The per-DLL overrides are gone except `wminet_utils=builtin`.
+  - All earlier tests pass on the custom build: WMI from STA, named-pipe
+    `File.Exists`, ECDH through `ncrypt`, CryptoAPI DH with `CALG_CYLINK_MEK`,
+    Portal's 108 locale IDs.
+  - New test `tests/retrieval-pointers`: for a key file on the read-only
+    licence volume, Wine now reports one extent at the same cluster number
+    that `tools/ntfs_probe.py` reads from the NTFS file record, and (once the
+    user has read access to the block device) the same volume serial number as
+    the NTFS boot sector.
+  - The licence manager service starts under the custom build.

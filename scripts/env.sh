@@ -9,3 +9,6 @@ export WINEARCH=win64
 export WINEDEBUG="${WINEDEBUG:--all,+err}"
 export TIAWINE_LOGS="${TIAWINE_LOGS:-$TIAWINE_ROOT/logs}"
 export TIA_VERSION="${TIA_VERSION:-V21}"
+# A complete patched Wine built by scripts/build-wine.sh takes precedence over
+# the system Wine. It runs from its build tree.
+if [ -x "$TIAWINE_ROOT/wine-bin/wine" ]; then export PATH="$TIAWINE_ROOT/wine-bin:$PATH"; fi

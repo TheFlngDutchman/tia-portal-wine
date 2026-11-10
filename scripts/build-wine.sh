@@ -18,4 +18,7 @@ done
 mkdir -p "$build" && cd "$build"
 [ -f Makefile ] || "$src/configure" --enable-archs=i386,x86_64 --disable-tests
 make -j"$(nproc)"
+mkdir -p "$TIAWINE_ROOT/wine-bin"
+ln -sfn "$build/wine" "$TIAWINE_ROOT/wine-bin/wine"
+ln -sfn "$build/server/wineserver" "$TIAWINE_ROOT/wine-bin/wineserver"
 echo "custom wine: $build/wine  ($("$build/wine" --version))"

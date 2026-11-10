@@ -50,16 +50,29 @@ It may turn out to be impossible without a different approach. See
 ## Quick start
 
 Requirements: Arch Linux (or similar) with `wine`, `winetricks`, `cabextract`,
-`hivex`, `samba` (for `ntlm_auth`), `mingw-w64-gcc`, and about 100 GB of space on a Linux filesystem.
+`hivex`, `samba` (for `ntlm_auth`), `mingw-w64-gcc`, Wine's build dependencies,
+and about 100 GB of space on a Linux filesystem.
 
 ```bash
 . scripts/env.sh               # paths; override via environment variables
 scripts/mount-storage.sh       # optional: ext4 image on an exFAT/NTFS drive
-scripts/create-prefix.sh       # 64-bit prefix + .NET Framework 4.8
-scripts/build-wine-patches.sh      # patched Wine WMI DLLs (see patches/wine)
-scripts/mount-windows-ro.sh    # optional: inspect a dual-boot install, read-only
-scripts/inventory.sh
+scripts/create-prefix.sh       # 64-bit prefix + .NET Framework 4.8 (system Wine)
+scripts/build-wine.sh          # complete Wine with patches/wine applied
+scripts/start-portal.sh        # after installing TIA Portal into the prefix
 ```
+
+`scripts/build-wine.sh` builds the same Wine version as the installed one and
+runs it from its build tree; `env.sh` puts it first in `PATH`. Two things to
+know when switching an existing prefix to it:
+
+- Write `disable` into `<prefix>/.update-timestamp`. Otherwise the first start
+  runs a prefix update, which left .NET applications unable to start here.
+- Set the DLL override `wminet_utils=builtin`, so that Wine's `wminet_utils`
+  is used instead of the one .NET 4.8 installs.
+
+`scripts/build-wine-patches.sh` is the earlier approach (single patched DLLs
+installed as native overrides on top of the system Wine). It cannot carry
+patches 0007 and 0008.
 
 ## Licence
 

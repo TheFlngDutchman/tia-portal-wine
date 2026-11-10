@@ -1,5 +1,5 @@
 diff --git i/dlls/ntdll/unix/file.c w/dlls/ntdll/unix/file.c
-index 8b87cc8..95d8dd4 100644
+index 8b87cc8..bfe8010 100644
 --- i/dlls/ntdll/unix/file.c
 +++ w/dlls/ntdll/unix/file.c
 @@ -96,6 +96,10 @@
@@ -20,7 +20,7 @@ index 8b87cc8..95d8dd4 100644
 +/* Report where a file's data lies on its volume, in clusters, from the
 + * kernel's extent map. Returns STATUS_NOT_SUPPORTED if that is unavailable. */
 +static NTSTATUS get_retrieval_pointers( int fd, LONGLONG start_vcn, RETRIEVAL_POINTERS_BUFFER *buffer,
-+                                        ULONG out_size, ULONG *ret_size )
++                                        ULONG out_size, ULONG_PTR *ret_size )
 +{
 +#ifdef FS_IOC_FIEMAP
 +    enum { MAX_EXTENTS = 64 };
