@@ -463,3 +463,20 @@
   - Fix in patch 0008: if the record on the device is not in use or its
     modification time differs from the file's, flush (`sync()`) once before
     reading it. The test now gets the same file index from the first query on.
+- Third copy of the licence volume, upgrade done with the fixed patch 0008:
+  "Check" still reports the upgraded keys as valid five minutes later (user
+  test).
+- Portal with the V21 keys: the licence is accepted and an S7-1500 can be
+  added, as far as the PLC security settings (user test). Two different ends:
+  1. Exit with an unhandled breakpoint exception (0x80000003) straight after an
+     exchange with the licence manager; no managed exception. Not understood.
+  2. With more tracing: `System.AccessViolationException` (read of address 8
+     from JIT-compiled code) in `HwcnPureFacade.Initialize`, on a thread-pool
+     thread. That is the code that asked for the culture "jp". With the first
+     version of the custom-locale change such a culture had LCID 0 instead of
+     0x1000 and no language code. Patch 0005 now answers as Windows 10 does:
+     name "jp", LCID 0x1000 (also from `LocaleNameToLCID`), language code
+     "jp", display name "Unknown Language (jp)". Whether that was the cause of
+     the access violation is not confirmed.
+- User observation: in the device selection dialog the mouse focus keeps
+  jumping, which makes it hard to pick a PLC. Not looked into yet.

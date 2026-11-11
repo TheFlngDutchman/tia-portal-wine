@@ -1,5 +1,5 @@
 diff --git i/dlls/kernelbase/locale.c w/dlls/kernelbase/locale.c
-index 798e4be..5a4c1bf 100644
+index 798e4be..0449f9a 100644
 --- i/dlls/kernelbase/locale.c
 +++ w/dlls/kernelbase/locale.c
 @@ -6109,6 +6109,24 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoW( LCID lcid, LCTYPE lctype, WCHAR *bu
@@ -27,7 +27,7 @@ index 798e4be..5a4c1bf 100644
  /******************************************************************************
   *	GetLocaleInfoEx   (kernelbase.@)
   */
-@@ -6119,6 +6137,26 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoEx( const WCHAR *name, LCTYPE info, WC
+@@ -6119,6 +6137,67 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoEx( const WCHAR *name, LCTYPE info, WC
  
      TRACE( "%s 0x%lx %p %d\n", debugstr_w(name), info, buffer, len );
  
@@ -35,9 +35,50 @@ index 798e4be..5a4c1bf 100644
 +     * it keeps its own name and otherwise behaves like the invariant locale. */
 +    if (!locale && is_wellformed_locale_name( name ))
 +    {
-+        if ((info & 0xffff) == LOCALE_SNAME)
++        WCHAR str[LOCALE_NAME_MAX_LENGTH + 32];
++        const WCHAR *ret = NULL;
++        unsigned int i;
++
++        switch (info & 0xffff)
 +        {
-+            INT needed = lstrlenW( name ) + 1;
++        case LOCALE_SNAME:
++            ret = name;
++            break;
++        case LOCALE_SISO639LANGNAME:
++        case LOCALE_SISO639LANGNAME2:
++            for (i = 0; name[i] && name[i] != '-'; i++) str[i] = name[i];
++            str[i] = 0;
++            ret = str;
++            break;
++        case LOCALE_SENGLISHDISPLAYNAME:
++        case LOCALE_SNATIVEDISPLAYNAME:
++        case LOCALE_SLOCALIZEDDISPLAYNAME:
++        case LOCALE_SENGLISHLANGUAGENAME:
++        case LOCALE_SNATIVELANGUAGENAME:
++        case LOCALE_SLOCALIZEDLANGUAGENAME:
++            swprintf( str, ARRAY_SIZE(str), L"Unknown Language (%s)", name );
++            ret = str;
++            break;
++        case LOCALE_ILANGUAGE:
++            if (info & LOCALE_RETURN_NUMBER)
++            {
++                DWORD value = LOCALE_CUSTOM_UNSPECIFIED;
++
++                if (!len) return sizeof(value) / sizeof(WCHAR);
++                if (!buffer || len < sizeof(value) / sizeof(WCHAR))
++                {
++                    SetLastError( ERROR_INSUFFICIENT_BUFFER );
++                    return 0;
++                }
++                memcpy( buffer, &value, sizeof(value) );
++                return sizeof(value) / sizeof(WCHAR);
++            }
++            ret = L"1000";
++            break;
++        }
++        if (ret)
++        {
++            INT needed = lstrlenW( ret ) + 1;
 +
 +            if (!len) return needed;
 +            if (!buffer || len < needed)
@@ -45,7 +86,7 @@ index 798e4be..5a4c1bf 100644
 +                SetLastError( ERROR_INSUFFICIENT_BUFFER );
 +                return 0;
 +            }
-+            memcpy( buffer, name, needed * sizeof(WCHAR) );
++            memcpy( buffer, ret, needed * sizeof(WCHAR) );
 +            return needed;
 +        }
 +        if ((locale = get_locale_by_name( L"", &lcid ))) lcid = LOCALE_CUSTOM_UNSPECIFIED;
@@ -54,7 +95,7 @@ index 798e4be..5a4c1bf 100644
      if (!locale)
      {
          SetLastError( ERROR_INVALID_PARAMETER );
-@@ -6899,6 +6937,18 @@ INT WINAPI DECLSPEC_HOTPATCH LCIDToLocaleName( LCID lcid, WCHAR *name, INT count
+@@ -6899,6 +6978,18 @@ INT WINAPI DECLSPEC_HOTPATCH LCIDToLocaleName( LCID lcid, WCHAR *name, INT count
  {
      const NLS_LOCALE_DATA *locale = NlsValidateLocale( &lcid, flags );
  
@@ -70,6 +111,14 @@ index 798e4be..5a4c1bf 100644
 +        }
 +        if (lcid) locale = NlsValidateLocale( &lcid, flags );
 +    }
+     if (!locale)
+     {
+         SetLastError( ERROR_INVALID_PARAMETER );
+@@ -7053,6 +7144,7 @@ LCID WINAPI DECLSPEC_HOTPATCH LocaleNameToLCID( const WCHAR *name, DWORD flags )
+     LCID lcid;
+     const NLS_LOCALE_DATA *locale = get_locale_by_name( name, &lcid );
+ 
++    if (!locale && is_wellformed_locale_name( name )) return LOCALE_CUSTOM_UNSPECIFIED;
      if (!locale)
      {
          SetLastError( ERROR_INVALID_PARAMETER );
