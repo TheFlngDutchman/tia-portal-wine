@@ -1,0 +1,56 @@
+diff --git i/programs/services/services.c w/programs/services/services.c
+index 0830a75..ba6bfbe 100644
+--- i/programs/services/services.c
++++ w/programs/services/services.c
+@@ -1154,12 +1154,51 @@ static DWORD process_send_start_message(struct process_entry *process, BOOL shar
+     return result;
+ }
+ 
++/* Start the services a service depends on before the service itself, as
++ * Windows does. Without this a service that needs e.g. RpcSs while it starts
++ * up cannot get it: the start-up lock is held until it reports running. */
++static void service_start_dependencies(struct service_entry *service)
++{
++    static unsigned int depth;
++    const WCHAR *name;
++
++    if (!service->dependOnServices || depth >= 8) return;
++
++    depth++;
++    for (name = service->dependOnServices; *name; name += lstrlenW(name) + 1)
++    {
++        struct service_entry *dep;
++        DWORD state, err;
++
++        scmdatabase_lock(service->db);
++        if ((dep = scmdatabase_find_service(service->db, name))) grab_service(dep);
++        scmdatabase_unlock(service->db);
++        if (!dep) continue;
++
++        service_lock(dep);
++        state = dep->status.dwCurrentState;
++        service_unlock(dep);
++
++        if (dep != service && state == SERVICE_STOPPED && dep->config.dwStartType != SERVICE_DISABLED)
++        {
++            TRACE("starting %s, a dependency of %s\n", wine_dbgstr_w(dep->name), wine_dbgstr_w(service->name));
++            if ((err = service_start(dep, 0, NULL)))
++                WARN("dependency %s of %s failed to start: %lu\n", wine_dbgstr_w(dep->name),
++                     wine_dbgstr_w(service->name), err);
++        }
++        release_service(dep);
++    }
++    depth--;
++}
++
+ DWORD service_start(struct service_entry *service, DWORD service_argc, LPCWSTR *service_argv)
+ {
+     struct process_entry *process = NULL;
+     BOOL shared_process;
+     DWORD err;
+ 
++    service_start_dependencies(service);
++
+     err = service_start_process(service, &process, &shared_process);
+     if (err == ERROR_SUCCESS)
+     {

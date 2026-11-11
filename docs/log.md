@@ -393,3 +393,17 @@
   forwards `Invoke`. Trace after the change: `Advise` returns `S_OK`, the
   control fires events, and a synthetic right click reaches
   `TrackPopupMenuEx`.
+- User test: double click and context menu in the key list work. "Upgrade" and
+  "Transfer" are still greyed out.
+- The licence manager service asks for the COM local server "LicenseTransfer
+  Object" (`{2255B183-...}`, `ALMPANELPLUGIN.EXE`) while it starts, and that
+  failed. A direct test (`CoGetClassObject` with `IClassFactory`) works, so the
+  class is fine; the failure was timing. The service starts automatically at
+  boot, needs RpcSs for COM, and Wine's service manager holds its start-up lock
+  until the service reports running, so `StartService(RpcSs)` from inside the
+  starting service fails (`ERROR_SERVICE_DATABASE_LOCKED`). The service
+  declares `DependOnService = RPCSS, TCPIP`, which Wine did not act on.
+  `patches/wine/0013-services-start-dependencies-first.patch` starts a
+  service's dependencies before the service. Result: the licence manager
+  service reports running immediately instead of after 30 seconds to four
+  minutes, and the class-object error is gone from its start-up.
