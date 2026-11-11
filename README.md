@@ -40,7 +40,7 @@ decompiled code or licence data. You need your own licensed copy of TIA Portal.
 | 2 | TIA Portal installer completes | mostly: 54 of 58 packages install; drivers, licence manager and ProSave fail |
 | 3 | Portal starts and shows its main window | reached with the Wine patches in `patches/wine` |
 | 4 | Open, edit and compile a project offline | partly: a new project can be created; opening an existing one reaches the product check. Editing and compiling not tested |
-| 5 | Licence recognised by Automation License Manager | partly: the service and its window run and list the keys on a mounted licence volume; whether Portal accepts them is open |
+| 5 | Licence recognised by Automation License Manager | partly: service and window run, keys on a mounted licence volume are listed, and an upgrade (V20 -> V21) was applied there; whether Portal accepts the keys is being tested |
 | 6 | Go online / download to a PLC over Ethernet | not started, expected to be the hardest |
 
 Goal 6 depends on Siemens kernel-mode network drivers, which Wine cannot load.

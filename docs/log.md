@@ -420,3 +420,16 @@
   - `patches/wine/0014-mshtml-pass-mouse-activation-to-host.patch` passes the
     message to the parent windows first. A message trace now shows it reaching
     the program's "HtmlView", the splitter and the frame window.
+- User test with patch 0014: the "License Key" menu follows the selection in
+  the list, and the upgrade of STEP 7 Professional and WinCC Advanced from V20
+  to V21 was carried out in the licence manager on the writable test copy of
+  the licence volume. Afterwards the list shows five keys, the two upgraded
+  ones at version 21.0, and the two upgrade keys are gone.
+  - For a newly written key file, Wine and the NTFS file record agree on the
+    on-disk location and the file reference.
+  - They do not agree on the attributes: Wine reports hidden + system for the
+    new file, the NTFS record has only "archive". Wine stores those two flags
+    in an extended attribute (`user.DOSATTRIB`) instead of the NTFS attribute
+    flags, so Windows would not see them. Keys written under Wine should
+    therefore not be assumed valid on Windows. Possible fix: write
+    `system.ntfs_attrib` on NTFS volumes.
