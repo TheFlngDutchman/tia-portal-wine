@@ -1,8 +1,8 @@
 diff --git i/dlls/ncrypt/main.c w/dlls/ncrypt/main.c
-index 03ff94e..576200d 100644
+index 03ff94e..023fa1c 100644
 --- i/dlls/ncrypt/main.c
 +++ w/dlls/ncrypt/main.c
-@@ -132,8 +132,54 @@ static SECURITY_STATUS set_object_property(struct object *object, const WCHAR *n
+@@ -132,8 +132,61 @@ static SECURITY_STATUS set_object_property(struct object *object, const WCHAR *n
      return ERROR_SUCCESS;
  }
  
@@ -14,16 +14,24 @@ index 03ff94e..576200d 100644
 +    DWORD bitlen;
 +    DWORD public_magic;
 +    DWORD private_magic;
++    const WCHAR *group;
 +};
 +
 +static const struct ecdh_alg ecdh_algs[] =
 +{
 +    { ECDH_P256, BCRYPT_ECDH_P256_ALGORITHM, BCRYPT_ECDH_P256_ALG_HANDLE, 256,
-+      BCRYPT_ECDH_PUBLIC_P256_MAGIC, BCRYPT_ECDH_PRIVATE_P256_MAGIC },
++      BCRYPT_ECDH_PUBLIC_P256_MAGIC, BCRYPT_ECDH_PRIVATE_P256_MAGIC, L"ECDH" },
 +    { ECDH_P384, BCRYPT_ECDH_P384_ALGORITHM, BCRYPT_ECDH_P384_ALG_HANDLE, 384,
-+      BCRYPT_ECDH_PUBLIC_P384_MAGIC, BCRYPT_ECDH_PRIVATE_P384_MAGIC },
++      BCRYPT_ECDH_PUBLIC_P384_MAGIC, BCRYPT_ECDH_PRIVATE_P384_MAGIC, L"ECDH" },
 +    { ECDH_P521, BCRYPT_ECDH_P521_ALGORITHM, BCRYPT_ECDH_P521_ALG_HANDLE, 521,
-+      BCRYPT_ECDH_PUBLIC_P521_MAGIC, BCRYPT_ECDH_PRIVATE_P521_MAGIC },
++      BCRYPT_ECDH_PUBLIC_P521_MAGIC, BCRYPT_ECDH_PRIVATE_P521_MAGIC, L"ECDH" },
++    /* ECDSA keys are handled the same way; only signing differs */
++    { ECDSA_P256, BCRYPT_ECDSA_P256_ALGORITHM, BCRYPT_ECDSA_P256_ALG_HANDLE, 256,
++      BCRYPT_ECDSA_PUBLIC_P256_MAGIC, BCRYPT_ECDSA_PRIVATE_P256_MAGIC, L"ECDSA" },
++    { ECDSA_P384, BCRYPT_ECDSA_P384_ALGORITHM, BCRYPT_ECDSA_P384_ALG_HANDLE, 384,
++      BCRYPT_ECDSA_PUBLIC_P384_MAGIC, BCRYPT_ECDSA_PRIVATE_P384_MAGIC, L"ECDSA" },
++    { ECDSA_P521, BCRYPT_ECDSA_P521_ALGORITHM, BCRYPT_ECDSA_P521_ALG_HANDLE, 521,
++      BCRYPT_ECDSA_PUBLIC_P521_MAGIC, BCRYPT_ECDSA_PRIVATE_P521_MAGIC, L"ECDSA" },
 +};
 +
 +static const struct ecdh_alg *get_ecdh_alg_from_name(const WCHAR *name)
@@ -52,33 +60,34 @@ index 03ff94e..576200d 100644
 +
  static struct object *create_key_object(enum algid algid, NCRYPT_PROV_HANDLE provider)
  {
-+    static const WCHAR ecdh_group[] = L"ECDH";
 +    const struct ecdh_alg *ecdh;
      NCRYPT_SUPPORTED_LENGTHS supported_lengths = {512, 16384, 8, 1024};
      struct object *object;
      DWORD dw_value;
-@@ -162,6 +208,20 @@ static struct object *create_key_object(enum algid algid, NCRYPT_PROV_HANDLE pro
-         object->key.algid = ECDSA_P256;
+@@ -157,9 +210,21 @@ static struct object *create_key_object(enum algid algid, NCRYPT_PROV_HANDLE pro
          break;
  
+     case ECDSA_P256:
++    case ECDSA_P384:
++    case ECDSA_P521:
 +    case ECDH_P256:
 +    case ECDH_P384:
 +    case ECDH_P521:
-+        if (!(object = allocate_object(KEY))) return NULL;
-+
+         if (!(object = allocate_object(KEY))) return NULL;
+ 
+-        object->key.algid = ECDSA_P256;
 +        ecdh = get_ecdh_alg_from_id(algid);
 +        object->key.algid = algid;
 +        set_object_property(object, NCRYPT_ALGORITHM_PROPERTY, (BYTE *)ecdh->name,
 +                            (lstrlenW(ecdh->name) + 1) * sizeof(WCHAR));
-+        set_object_property(object, NCRYPT_ALGORITHM_GROUP_PROPERTY, (BYTE *)ecdh_group, sizeof(ecdh_group));
++        set_object_property(object, NCRYPT_ALGORITHM_GROUP_PROPERTY, (BYTE *)ecdh->group,
++                            (lstrlenW(ecdh->group) + 1) * sizeof(WCHAR));
 +        set_object_property(object, NCRYPT_LENGTH_PROPERTY, (BYTE *)&ecdh->bitlen, sizeof(ecdh->bitlen));
 +        set_object_property(object, BCRYPT_PUBLIC_KEY_LENGTH, (BYTE *)&ecdh->bitlen, sizeof(ecdh->bitlen));
-+        break;
-+
+         break;
+ 
      default:
-         ERR("Invalid algid %#x\n", algid);
-         return NULL;
-@@ -181,6 +241,7 @@ static struct object *create_key_object(enum algid algid, NCRYPT_PROV_HANDLE pro
+@@ -181,6 +246,7 @@ static struct object *create_key_object(enum algid algid, NCRYPT_PROV_HANDLE pro
  SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_HANDLE *key,
                                                  const WCHAR *algid, const WCHAR *name, DWORD keyspec, DWORD flags)
  {
@@ -86,28 +95,34 @@ index 03ff94e..576200d 100644
      struct object *object;
  
      TRACE("(%#Ix, %p, %s, %s, %#lx, %#lx)\n", provider, key, wine_dbgstr_w(algid),
-@@ -230,6 +291,20 @@ SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE provider, NCR
-         set_object_property(object, NCRYPT_LENGTH_PROPERTY, (BYTE *)&bitlen, sizeof(bitlen));
-         set_object_property(object, BCRYPT_PUBLIC_KEY_LENGTH, (BYTE *)&bitlen, sizeof(bitlen));
+@@ -212,23 +278,19 @@ SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE provider, NCR
+         set_object_property(object, NCRYPT_LENGTH_PROPERTY, (BYTE *)&default_bitlen, sizeof(default_bitlen));
+         set_object_property(object, BCRYPT_PUBLIC_KEY_LENGTH, (BYTE *)&default_bitlen, sizeof(default_bitlen));
      }
+-    else if (!lstrcmpiW(algid, BCRYPT_ECDSA_P256_ALGORITHM))
 +    else if ((ecdh = get_ecdh_alg_from_name(algid)))
-+    {
-+        NTSTATUS status;
-+
+     {
+         NTSTATUS status;
+-        DWORD bitlen = 256;
+ 
+-        if (!(object = create_key_object(ECDSA_P256, provider)))
 +        if (!(object = create_key_object(ecdh->algid, provider)))
-+            return NTE_NO_MEMORY;
-+
+             return NTE_NO_MEMORY;
+ 
+-        status = BCryptGenerateKeyPair(BCRYPT_ECDSA_P256_ALG_HANDLE, &object->key.bcrypt_key, bitlen, 0);
 +        status = BCryptGenerateKeyPair(ecdh->handle, &object->key.bcrypt_key, ecdh->bitlen, 0);
-+        if (status != STATUS_SUCCESS)
-+        {
-+            free(object);
-+            return map_ntstatus(status);
-+        }
-+    }
+         if (status != STATUS_SUCCESS)
+         {
+             free(object);
+             return map_ntstatus(status);
+         }
+-
+-        set_object_property(object, NCRYPT_LENGTH_PROPERTY, (BYTE *)&bitlen, sizeof(bitlen));
+-        set_object_property(object, BCRYPT_PUBLIC_KEY_LENGTH, (BYTE *)&bitlen, sizeof(bitlen));
+     }
      else
      {
-         FIXME("Algorithm not handled %s\n", wine_dbgstr_w(algid));
-@@ -308,7 +383,9 @@ SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE handle, DWORD flags)
+@@ -308,7 +370,9 @@ SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE handle, DWORD flags)
  
      if (!(prop = get_object_property(object, NCRYPT_LENGTH_PROPERTY))) return NTE_INVALID_HANDLE;
      key_length = *(DWORD *)prop->value;
@@ -118,7 +133,7 @@ index 03ff94e..576200d 100644
      if (status != STATUS_SUCCESS)
      {
          ERR("Error setting key length property\n");
-@@ -362,6 +439,10 @@ SECURITY_STATUS WINAPI NCryptFreeObject(NCRYPT_HANDLE handle)
+@@ -362,6 +426,10 @@ SECURITY_STATUS WINAPI NCryptFreeObject(NCRYPT_HANDLE handle)
              return 0;
          break;
  
@@ -129,7 +144,7 @@ index 03ff94e..576200d 100644
      default:
          WARN("invalid handle %#Ix\n", handle);
          return NTE_INVALID_HANDLE;
-@@ -407,6 +488,7 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_H
+@@ -407,6 +475,7 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_H
                                         BYTE *data, DWORD datasize, DWORD flags)
  {
      BCRYPT_KEY_BLOB *header = (BCRYPT_KEY_BLOB *)data;
@@ -137,7 +152,7 @@ index 03ff94e..576200d 100644
      struct object *object;
  
      TRACE("(%#Ix, %#Ix, %s, %p, %p, %p, %lu, %#lx)\n", provider, decrypt_key, wine_dbgstr_w(type),
-@@ -461,6 +543,21 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_H
+@@ -461,6 +530,21 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_H
          break;
      }
      default:
@@ -159,7 +174,7 @@ index 03ff94e..576200d 100644
          FIXME("Unhandled key magic %#lx\n", header->Magic);
          return NTE_INVALID_PARAMETER;
      }
-@@ -617,3 +714,44 @@ SECURITY_STATUS WINAPI NCryptVerifySignature(NCRYPT_KEY_HANDLE handle, void *pad
+@@ -617,3 +701,44 @@ SECURITY_STATUS WINAPI NCryptVerifySignature(NCRYPT_KEY_HANDLE handle, void *pad
      return map_ntstatus(BCryptVerifySignature(key_object->key.bcrypt_key, padding, hash, hash_size, signature,
                                                signature_size, flags));
  }
@@ -227,20 +242,22 @@ index 0a362aa..6cf619d 100644
  @ stdcall NCryptSetProperty(ptr wstr ptr long long)
  @ stdcall NCryptSignHash(long ptr ptr long ptr long ptr long)
 diff --git i/dlls/ncrypt/ncrypt_internal.h w/dlls/ncrypt/ncrypt_internal.h
-index 49284fc..1753084 100644
+index 49284fc..27ecc96 100644
 --- i/dlls/ncrypt/ncrypt_internal.h
 +++ w/dlls/ncrypt/ncrypt_internal.h
-@@ -27,6 +27,9 @@ enum algid
+@@ -27,6 +27,11 @@ enum algid
      DSA,
      ECDSA,
      ECDSA_P256,
 +    ECDH_P256,
 +    ECDH_P384,
 +    ECDH_P521,
++    ECDSA_P384,
++    ECDSA_P521,
  };
  
  struct key
-@@ -39,10 +42,16 @@ struct storage_provider
+@@ -39,10 +44,16 @@ struct storage_provider
  {
  };
  
@@ -257,7 +274,7 @@ index 49284fc..1753084 100644
  };
  
  struct object_property
-@@ -62,5 +71,6 @@ struct object
+@@ -62,5 +73,6 @@ struct object
      {
          struct key key;
          struct storage_provider storage_provider;

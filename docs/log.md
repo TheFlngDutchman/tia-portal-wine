@@ -532,3 +532,16 @@
     now implements all of those except `Paste` and `FindText`, on top of the
     editor's paragraph format code. Test: `tests/richedit-tom/tom_para.c`,
     15 checks, all pass.
+- With the extended patch 0015 (user test): the call options dialog works, an
+  SCL block with a few lines compiles ("compile software").
+- "Compile hardware" crashed: `CryptographicException` 0x80090027
+  (`NTE_INVALID_PARAMETER`) from `X509Certificate2.GetECDsaPublicKey` ->
+  `CngKey.Import` -> `NCryptImportKey`, called by the PLC certificate
+  validation of the hardware configuration. Wine's `ncrypt` only imported RSA
+  key blobs. Patch 0004 (renamed `0004-ncrypt-elliptic-curve-keys.patch`) now
+  handles ECDSA P-256/P-384/P-521 keys the same way as the ECDH ones.
+  - Test `tests/ecdsa-cert`: certificates and signatures made with OpenSSL on
+    Linux; the .NET side reads the public key from the certificate and checks
+    the signature. P-256 and P-384 pass (valid signature accepted, tampered
+    data rejected). P-521 fails with 0x80090008 (`NTE_BAD_ALGID`); not looked
+    into.
