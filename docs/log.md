@@ -369,3 +369,27 @@
   context menu and "Upgrade"; then the upgrade itself on the test copy of the
   licence VHD (`Lizenzen266A-wine-test.vhd`, writable, detached overnight);
   then Portal with a V21 key; then Startdrive.
+
+## 2026-11-11
+
+- Patch 0012 (ambient properties) does not break the key list. The blank pane
+  seen the evening before is a transient: for a few seconds after a drive is
+  selected the program shows its (empty) WebView2 host window on top of the
+  Internet Explorer control, then hides it again.
+- User observation: besides the missing context menu, double-clicking a drive
+  in the "My Computer" list does not navigate. Both are events of the list
+  control that never reached the program. Traced with temporary wrappers:
+  1. The program takes the enumerator from the `<object>` element, fetches the
+     connection points and calls `Advise` on the second one. Internet Explorer
+     lists `IPropertyNotifySink` first and the control's event interface after
+     it; the control itself lists them the other way round.
+  2. The program's sink only implements `IDispatch`. The control's own (ATL)
+     connection point asks the sink for the event interface and refuses it
+     (`CONNECT_E_CANNOTCONNECT`). Internet Explorer's connection point accepts
+     a plain `IDispatch` sink and relays the events.
+  Patch 0011 now does both: the element's enumerator orders the control's
+  connection points as IE does, and each event connection point wraps the
+  host's sink in a relay that answers for the control's event interface and
+  forwards `Invoke`. Trace after the change: `Advise` returns `S_OK`, the
+  control fires events, and a synthetic right click reaches
+  `TrackPopupMenuEx`.

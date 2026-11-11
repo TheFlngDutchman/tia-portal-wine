@@ -12,7 +12,7 @@ opt=(); [ "$mode" = ro ] && opt=(-r)
 loop=$(udisksctl loop-setup "${opt[@]}" -f "$vhd" | grep -o '/dev/loop[0-9]*')
 part="${loop}p1"
 for _ in 1 2 3 4 5; do [ -b "$part" ] && break; sleep 1; done
-findmnt -n "$part" >/dev/null || udisksctl mount -b "$part" >/dev/null
+udisksctl mount -b "$part" >/dev/null 2>&1 || true   # the desktop may have mounted it already
 mnt=$(findmnt -no TARGET "$part" | head -n1)
 pkexec setfacl -m "u:$(id -un):r" "$part"
 ln -sfn "$mnt" "$WINEPREFIX/dosdevices/$letter:"

@@ -1,8 +1,291 @@
 diff --git i/dlls/mshtml/conpoint.c w/dlls/mshtml/conpoint.c
-index 95043e7..faaa872 100644
+index 95043e7..20dd8cc 100644
 --- i/dlls/mshtml/conpoint.c
 +++ w/dlls/mshtml/conpoint.c
-@@ -397,6 +397,17 @@ static HRESULT WINAPI ConnectionPointContainer_EnumConnectionPoints(IConnectionP
+@@ -393,10 +393,300 @@ static ULONG WINAPI ConnectionPointContainer_Release(IConnectionPointContainer *
+     return IUnknown_Release(This->outer);
+ }
+ 
++/* Enumerator over the connection points of an embedded ActiveX control, as
++ * seen through its <object> element. IPropertyNotifySink comes first and the
++ * control's event interface after it: hosts written against Internet Explorer
++ * pick the event connection point by that position. */
++typedef struct {
++    IEnumConnectionPoints IEnumConnectionPoints_iface;
++    LONG ref;
++    IConnectionPoint **cps;
++    ULONG count, pos;
++} plugin_cp_enum;
++
++static inline plugin_cp_enum *impl_from_IEnumConnectionPoints(IEnumConnectionPoints *iface)
++{
++    return CONTAINING_RECORD(iface, plugin_cp_enum, IEnumConnectionPoints_iface);
++}
++
++static HRESULT create_plugin_cp_enum(IConnectionPoint **cps, ULONG count, ULONG pos, IEnumConnectionPoints **ret);
++
++static HRESULT WINAPI plugin_cp_enum_QueryInterface(IEnumConnectionPoints *iface, REFIID riid, void **ppv)
++{
++    if(IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IEnumConnectionPoints)) {
++        *ppv = iface;
++        IEnumConnectionPoints_AddRef(iface);
++        return S_OK;
++    }
++    *ppv = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI plugin_cp_enum_AddRef(IEnumConnectionPoints *iface)
++{
++    plugin_cp_enum *This = impl_from_IEnumConnectionPoints(iface);
++    return InterlockedIncrement(&This->ref);
++}
++
++static ULONG WINAPI plugin_cp_enum_Release(IEnumConnectionPoints *iface)
++{
++    plugin_cp_enum *This = impl_from_IEnumConnectionPoints(iface);
++    LONG ref = InterlockedDecrement(&This->ref);
++    ULONG i;
++
++    if(!ref) {
++        for(i = 0; i < This->count; i++)
++            IConnectionPoint_Release(This->cps[i]);
++        free(This->cps);
++        free(This);
++    }
++    return ref;
++}
++
++static HRESULT WINAPI plugin_cp_enum_Next(IEnumConnectionPoints *iface, ULONG n, IConnectionPoint **cps, ULONG *fetched)
++{
++    plugin_cp_enum *This = impl_from_IEnumConnectionPoints(iface);
++    ULONG i = 0;
++
++    TRACE("(%p)->(%lu %p %p)\n", This, n, cps, fetched);
++
++    if(!cps || (n > 1 && !fetched))
++        return E_POINTER;
++
++    while(i < n && This->pos < This->count) {
++        cps[i] = This->cps[This->pos++];
++        IConnectionPoint_AddRef(cps[i]);
++        i++;
++    }
++    if(fetched)
++        *fetched = i;
++    return i == n ? S_OK : S_FALSE;
++}
++
++static HRESULT WINAPI plugin_cp_enum_Skip(IEnumConnectionPoints *iface, ULONG n)
++{
++    plugin_cp_enum *This = impl_from_IEnumConnectionPoints(iface);
++
++    if(n > This->count - This->pos) {
++        This->pos = This->count;
++        return S_FALSE;
++    }
++    This->pos += n;
++    return S_OK;
++}
++
++static HRESULT WINAPI plugin_cp_enum_Reset(IEnumConnectionPoints *iface)
++{
++    plugin_cp_enum *This = impl_from_IEnumConnectionPoints(iface);
++    This->pos = 0;
++    return S_OK;
++}
++
++static HRESULT WINAPI plugin_cp_enum_Clone(IEnumConnectionPoints *iface, IEnumConnectionPoints **ret)
++{
++    plugin_cp_enum *This = impl_from_IEnumConnectionPoints(iface);
++    return create_plugin_cp_enum(This->cps, This->count, This->pos, ret);
++}
++
++static const IEnumConnectionPointsVtbl plugin_cp_enum_vtbl = {
++    plugin_cp_enum_QueryInterface,
++    plugin_cp_enum_AddRef,
++    plugin_cp_enum_Release,
++    plugin_cp_enum_Next,
++    plugin_cp_enum_Skip,
++    plugin_cp_enum_Reset,
++    plugin_cp_enum_Clone
++};
++
++static HRESULT create_plugin_cp_enum(IConnectionPoint **cps, ULONG count, ULONG pos, IEnumConnectionPoints **ret)
++{
++    plugin_cp_enum *This;
++    ULONG i;
++
++    if(!(This = calloc(1, sizeof(*This))))
++        return E_OUTOFMEMORY;
++    if(count && !(This->cps = calloc(count, sizeof(*This->cps)))) {
++        free(This);
++        return E_OUTOFMEMORY;
++    }
++
++    This->IEnumConnectionPoints_iface.lpVtbl = &plugin_cp_enum_vtbl;
++    This->ref = 1;
++    This->count = count;
++    This->pos = pos;
++    for(i = 0; i < count; i++) {
++        This->cps[i] = cps[i];
++        IConnectionPoint_AddRef(cps[i]);
++    }
++
++    *ret = &This->IEnumConnectionPoints_iface;
++    return S_OK;
++}
++
++/* Connection points of an embedded control as Internet Explorer presents
++ * them: a host may connect a plain IDispatch sink. The control itself usually
++ * insists on a sink that answers for its event interface, so each host sink is
++ * wrapped in a relay that does, and that passes the events on. */
++typedef struct { IDispatch IDispatch_iface; LONG ref; IUnknown *sink; IDispatch *disp; IID iid; } plugin_event_relay;
++static inline plugin_event_relay *plugin_event_relay_from(IDispatch *iface) { return CONTAINING_RECORD(iface, plugin_event_relay, IDispatch_iface); }
++static HRESULT WINAPI plugin_event_relay_QI(IDispatch *iface, REFIID riid, void **ppv)
++{
++    plugin_event_relay *This = plugin_event_relay_from(iface);
++
++    if(IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDispatch) || IsEqualGUID(riid, &This->iid)) {
++        *ppv = &This->IDispatch_iface;
++        IDispatch_AddRef(&This->IDispatch_iface);
++        return S_OK;
++    }
++    *ppv = NULL;
++    return E_NOINTERFACE;
++}
++static ULONG WINAPI plugin_event_relay_AddRef(IDispatch *iface) { return InterlockedIncrement(&plugin_event_relay_from(iface)->ref); }
++static ULONG WINAPI plugin_event_relay_Release(IDispatch *iface)
++{
++    plugin_event_relay *This = plugin_event_relay_from(iface);
++    LONG ref = InterlockedDecrement(&This->ref);
++    if(!ref) { if(This->disp) IDispatch_Release(This->disp); IUnknown_Release(This->sink); free(This); }
++    return ref;
++}
++static HRESULT WINAPI plugin_event_relay_GetTypeInfoCount(IDispatch *iface, UINT *c) { *c = 0; return S_OK; }
++static HRESULT WINAPI plugin_event_relay_GetTypeInfo(IDispatch *iface, UINT i, LCID l, ITypeInfo **t) { return E_NOTIMPL; }
++static HRESULT WINAPI plugin_event_relay_GetIDsOfNames(IDispatch *iface, REFIID r, LPOLESTR *n, UINT c, LCID l, DISPID *d) { return E_NOTIMPL; }
++static HRESULT WINAPI plugin_event_relay_Invoke(IDispatch *iface, DISPID id, REFIID riid, LCID lcid, WORD flags,
++        DISPPARAMS *dp, VARIANT *res, EXCEPINFO *ei, UINT *argerr)
++{
++    plugin_event_relay *This = plugin_event_relay_from(iface);
++    HRESULT hres = This->disp ? IDispatch_Invoke(This->disp, id, riid, lcid, flags, dp, res, ei, argerr) : E_NOINTERFACE;
++    TRACE("event %ld (%u args) -> %08lx\n", id, dp ? dp->cArgs : 0, hres);
++    return hres;
++}
++static const IDispatchVtbl plugin_event_relay_vtbl = { plugin_event_relay_QI, plugin_event_relay_AddRef, plugin_event_relay_Release, plugin_event_relay_GetTypeInfoCount,
++    plugin_event_relay_GetTypeInfo, plugin_event_relay_GetIDsOfNames, plugin_event_relay_Invoke };
++
++typedef struct { IConnectionPoint IConnectionPoint_iface; LONG ref; IConnectionPoint *cp; } plugin_cp;
++static inline plugin_cp *plugin_cp_from(IConnectionPoint *iface) { return CONTAINING_RECORD(iface, plugin_cp, IConnectionPoint_iface); }
++static HRESULT WINAPI plugin_cp_QI(IConnectionPoint *iface, REFIID riid, void **ppv)
++{
++    if(IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IConnectionPoint)) { *ppv = iface; IConnectionPoint_AddRef(iface); return S_OK; }
++    *ppv = NULL; return E_NOINTERFACE;
++}
++static ULONG WINAPI plugin_cp_AddRef(IConnectionPoint *iface) { return InterlockedIncrement(&plugin_cp_from(iface)->ref); }
++static ULONG WINAPI plugin_cp_Release(IConnectionPoint *iface)
++{
++    plugin_cp *This = plugin_cp_from(iface);
++    LONG ref = InterlockedDecrement(&This->ref);
++    if(!ref) { IConnectionPoint_Release(This->cp); free(This); }
++    return ref;
++}
++static HRESULT WINAPI plugin_cp_GetConnectionInterface(IConnectionPoint *iface, IID *iid)
++{
++    HRESULT hres = IConnectionPoint_GetConnectionInterface(plugin_cp_from(iface)->cp, iid);
++    return hres;
++}
++static HRESULT WINAPI plugin_cp_GetConnectionPointContainer(IConnectionPoint *iface, IConnectionPointContainer **c)
++{
++    return IConnectionPoint_GetConnectionPointContainer(plugin_cp_from(iface)->cp, c);
++}
++static HRESULT WINAPI plugin_cp_Advise(IConnectionPoint *iface, IUnknown *sink, DWORD *cookie)
++{
++    plugin_cp *This = plugin_cp_from(iface);
++    plugin_event_relay *wrap = calloc(1, sizeof(*wrap));
++    IID iid = {0};
++    HRESULT hres;
++    wrap->IDispatch_iface.lpVtbl = &plugin_event_relay_vtbl;
++    wrap->ref = 1;
++    wrap->sink = sink;
++    IUnknown_AddRef(sink);
++    IUnknown_QueryInterface(sink, &IID_IDispatch, (void**)&wrap->disp);
++    IConnectionPoint_GetConnectionInterface(This->cp, &iid);
++    wrap->iid = iid;
++    hres = IConnectionPoint_Advise(This->cp, (IUnknown*)&wrap->IDispatch_iface, cookie);
++    TRACE("Advise on %s (sink %p) -> %08lx\n", debugstr_guid(&iid), sink, hres);
++    IDispatch_Release(&wrap->IDispatch_iface);
++    return hres;
++}
++static HRESULT WINAPI plugin_cp_Unadvise(IConnectionPoint *iface, DWORD cookie)
++{
++    HRESULT hres = IConnectionPoint_Unadvise(plugin_cp_from(iface)->cp, cookie);
++    TRACE("Unadvise(%lu) -> %08lx\n", cookie, hres);
++    return hres;
++}
++static HRESULT WINAPI plugin_cp_EnumConnections(IConnectionPoint *iface, IEnumConnections **e)
++{
++    return IConnectionPoint_EnumConnections(plugin_cp_from(iface)->cp, e);
++}
++static const IConnectionPointVtbl plugin_cp_vtbl = { plugin_cp_QI, plugin_cp_AddRef, plugin_cp_Release, plugin_cp_GetConnectionInterface,
++    plugin_cp_GetConnectionPointContainer, plugin_cp_Advise, plugin_cp_Unadvise, plugin_cp_EnumConnections };
++static IConnectionPoint *wrap_plugin_cp(IConnectionPoint *cp)
++{
++    plugin_cp *ret = calloc(1, sizeof(*ret));
++    ret->IConnectionPoint_iface.lpVtbl = &plugin_cp_vtbl;
++    ret->ref = 1;
++    ret->cp = cp;
++    IConnectionPoint_AddRef(cp);
++    return &ret->IConnectionPoint_iface;
++}
++
++static HRESULT enum_plugin_connection_points(IConnectionPointContainer *container, IEnumConnectionPoints **ret)
++{
++    IConnectionPoint *cps[32], *sorted[32];
++    IEnumConnectionPoints *plugin_enum;
++    ULONG count = 0, n = 0, i;
++    HRESULT hres;
++
++    hres = IConnectionPointContainer_EnumConnectionPoints(container, &plugin_enum);
++    if(FAILED(hres))
++        return hres;
++
++    while(count < ARRAY_SIZE(cps) && IEnumConnectionPoints_Next(plugin_enum, 1, &cps[count], NULL) == S_OK)
++        count++;
++    IEnumConnectionPoints_Release(plugin_enum);
++
++    /* property change notifications first, then the event interfaces */
++    for(i = 0; i < count; i++) {
++        IID iid;
++        if(SUCCEEDED(IConnectionPoint_GetConnectionInterface(cps[i], &iid)) && IsEqualGUID(&iid, &IID_IPropertyNotifySink))
++            sorted[n++] = cps[i];
++    }
++    for(i = 0; i < count; i++) {
++        IID iid;
++        if(FAILED(IConnectionPoint_GetConnectionInterface(cps[i], &iid)) || !IsEqualGUID(&iid, &IID_IPropertyNotifySink))
++            sorted[n++] = cps[i];
++    }
++
++    /* event connection points accept plain IDispatch sinks */
++    for(i = 0; i < count; i++) {
++        IID iid = {0};
++        IConnectionPoint_GetConnectionInterface(sorted[i], &iid);
++        TRACE("connection point %lu: %s\n", i, debugstr_guid(&iid));
++        if(IsEqualGUID(&iid, &IID_IPropertyNotifySink))
++            IConnectionPoint_AddRef(sorted[i]);
++        else
++            sorted[i] = wrap_plugin_cp(sorted[i]);
++    }
++    hres = create_plugin_cp_enum(sorted, count, 0, ret);
++    for(i = 0; i < count; i++) {
++        IConnectionPoint_Release(sorted[i]);
++        IConnectionPoint_Release(cps[i]);
++    }
++    return hres;
++}
++
+ static HRESULT WINAPI ConnectionPointContainer_EnumConnectionPoints(IConnectionPointContainer *iface,
          IEnumConnectionPoints **ppEnum)
  {
      ConnectionPointContainer *This = impl_from_IConnectionPointContainer(iface);
@@ -11,7 +294,7 @@ index 95043e7..faaa872 100644
 +    /* A host enumerating the connection points of an <object> element is
 +     * looking for the events of the embedded control. */
 +    if(This->get_plugin_container && SUCCEEDED(This->get_plugin_container(This, &plugin_container))) {
-+        HRESULT hres = IConnectionPointContainer_EnumConnectionPoints(plugin_container, ppEnum);
++        HRESULT hres = enum_plugin_connection_points(plugin_container, ppEnum);
 +        TRACE("(%p)->(%p) forwarded to embedded control: %08lx\n", This, ppEnum, hres);
 +        IConnectionPointContainer_Release(plugin_container);
 +        return hres;
@@ -20,7 +303,7 @@ index 95043e7..faaa872 100644
      FIXME("(%p)->(%p)\n", This, ppEnum);
      return E_NOTIMPL;
  }
-@@ -414,6 +425,17 @@ static HRESULT WINAPI ConnectionPointContainer_FindConnectionPoint(IConnectionPo
+@@ -414,6 +704,17 @@ static HRESULT WINAPI ConnectionPointContainer_FindConnectionPoint(IConnectionPo
                  riid, ppCP);
  
      cp = get_cp(This, riid, TRUE);
