@@ -1,5 +1,5 @@
 diff --git i/dlls/ntdll/unix/file.c w/dlls/ntdll/unix/file.c
-index 8b87cc8..b14116a 100644
+index 8b87cc8..31811f7 100644
 --- i/dlls/ntdll/unix/file.c
 +++ w/dlls/ntdll/unix/file.c
 @@ -96,6 +96,10 @@
@@ -13,7 +13,7 @@ index 8b87cc8..b14116a 100644
  #ifdef HAVE_SYS_XATTR_H
  #include <sys/xattr.h>
  #endif
-@@ -1327,6 +1331,183 @@ static BOOL append_entry( struct dir_data *data, const char *long_name,
+@@ -1327,6 +1331,197 @@ static BOOL append_entry( struct dir_data *data, const char *long_name,
  
  
  /* fetch the attributes of a file */
@@ -167,7 +167,21 @@ index 8b87cc8..b14116a 100644
 +        vol = &ntfs_volumes[ntfs_volume_count++];
 +        ntfs_open_volume( vol, st->st_dev );
 +    }
-+    if (vol && vol->fd != -1 && ntfs_read_record( vol, st->st_ino, rec ) &&
++    if (vol && vol->fd != -1)
++    {
++        /* The kernel writes a new or changed file record to the volume with a
++         * delay. Until then the record on the device is stale, and the answer
++         * would change later. Flush once if the record does not match the file. */
++        ULONGLONG mtime = ticks_from_time_t( st->st_mtime );
++#ifdef HAVE_STRUCT_STAT_ST_MTIM
++        mtime += st->st_mtim.tv_nsec / 100;
++#endif
++        if (!ntfs_read_record( vol, st->st_ino, rec ) || !(rec[22] & 1) ||
++            !(pos = ntfs_find_attribute( vol, rec, 0x10 )) || rec[pos + 8] ||
++            ntfs_le( rec + pos + ntfs_le( rec + pos + 20, 2 ) + 8, 8 ) != mtime)
++            sync();
++    }
++    if (vol && vol->fd != -1 && ntfs_read_record( vol, st->st_ino, rec ) && (rec[22] & 1) &&
 +        (pos = ntfs_find_attribute( vol, rec, 0x10 )) && !rec[pos + 8])
 +    {
 +        body = pos + ntfs_le( rec + pos + 20, 2 );
@@ -197,7 +211,7 @@ index 8b87cc8..b14116a 100644
  static inline ULONG get_file_attributes( const struct stat *st )
  {
      ULONG attr;
-@@ -1337,6 +1518,13 @@ static inline ULONG get_file_attributes( const struct stat *st )
+@@ -1337,6 +1532,13 @@ static inline ULONG get_file_attributes( const struct stat *st )
          attr = FILE_ATTRIBUTE_ARCHIVE;
      if (!(st->st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)))
          attr |= FILE_ATTRIBUTE_READONLY;
@@ -211,7 +225,7 @@ index 8b87cc8..b14116a 100644
      return attr;
  }
  
-@@ -1676,6 +1864,12 @@ static inline void get_file_times( const struct stat *st, LARGE_INTEGER *mtime,
+@@ -1676,6 +1878,12 @@ static inline void get_file_times( const struct stat *st, LARGE_INTEGER *mtime,
  #else
      *creation = *mtime;
  #endif
@@ -224,7 +238,7 @@ index 8b87cc8..b14116a 100644
  }
  
  
-@@ -1715,7 +1909,7 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+@@ -1715,7 +1923,7 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
      case FileInternalInformation:
          {
              FILE_INTERNAL_INFORMATION *info = ptr;
@@ -233,7 +247,7 @@ index 8b87cc8..b14116a 100644
          }
          break;
      case FileEndOfFileInformation:
-@@ -1775,14 +1969,14 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+@@ -1775,14 +1983,14 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
      case FileIdFullDirectoryInformation:
          {
              FILE_ID_FULL_DIRECTORY_INFORMATION *info = ptr;
@@ -250,7 +264,7 @@ index 8b87cc8..b14116a 100644
              fill_file_info( st, attr, info, FileDirectoryInformation );
          }
          break;
-@@ -1790,14 +1984,14 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+@@ -1790,14 +1998,14 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
          {
              FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION *info = ptr;
              memset( &info->FileId, 0, sizeof(info->FileId) );
@@ -267,7 +281,7 @@ index 8b87cc8..b14116a 100644
              fill_file_info( st, attr, info, FileDirectoryInformation );
          }
          break;
-@@ -6427,6 +6621,77 @@ static void ignore_server_ioctl_struct_holes( ULONG code, const void *in_buffer,
+@@ -6427,6 +6635,77 @@ static void ignore_server_ioctl_struct_holes( ULONG code, const void *in_buffer,
  }
  
  
@@ -345,7 +359,7 @@ index 8b87cc8..b14116a 100644
  /******************************************************************************
   *              NtFsControlFile   (NTDLL.@)
   */
-@@ -6468,11 +6733,25 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
+@@ -6468,11 +6747,25 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
      case FSCTL_GET_RETRIEVAL_POINTERS:
      {
          RETRIEVAL_POINTERS_BUFFER *buffer = (RETRIEVAL_POINTERS_BUFFER *)out_buffer;
@@ -374,7 +388,7 @@ index 8b87cc8..b14116a 100644
              buffer->ExtentCount                 = 1;
              buffer->StartingVcn.QuadPart        = 1;
              buffer->Extents[0].NextVcn.QuadPart = 0;
-@@ -6480,10 +6759,6 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
+@@ -6480,10 +6773,6 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
              size = sizeof(RETRIEVAL_POINTERS_BUFFER);
              status = STATUS_SUCCESS;
          }

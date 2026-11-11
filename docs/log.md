@@ -449,3 +449,17 @@
     `tests/culture-lcid/CultureName.cs`.
   - Open: why Portal does not use the V21 keys the licence manager lists, and
     why a key is reported as corrupt.
+- Keys written under Wine turn defective. On the first test copy the two keys
+  the upgrade had written showed a red cross after a while; the three keys
+  never rewritten stayed normal. On a second fresh copy "Check" reported OK
+  before and right after the upgrade (user test).
+  - Cause, reproduced with `tests/retrieval-pointers/fresh_file_stability.c`:
+    for a file just created on the NTFS volume, Wine (patch 0008) reported the
+    file index without the sequence number, and about 50 seconds later with
+    it. The kernel writes a new file record to the volume with a delay; until
+    then the record read from the block device is stale and the patch fell
+    back to the inode number. Anything recorded about the file in that window
+    no longer matches afterwards. This was a bug in patch 0008, not in Wine.
+  - Fix in patch 0008: if the record on the device is not in use or its
+    modification time differs from the file's, flush (`sync()`) once before
+    reading it. The test now gets the same file index from the first query on.
