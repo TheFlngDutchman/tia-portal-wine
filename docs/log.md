@@ -480,3 +480,23 @@
      the access violation is not confirmed.
 - User observation: in the device selection dialog the mouse focus keeps
   jumping, which makes it hard to pick a PLC. Not looked into yet.
+- The exits with an unhandled breakpoint exception are not licence-related.
+  A screen recording by the user shows Portal vanishing while the "PLC
+  security settings" wizard is open, when the mouse moves onto a checkbox.
+  The trace shows the breakpoint raised from managed code on the UI thread,
+  under Windows Forms frames.
+  - REA's static inspection of `Siemens.Automation.UI.Win32.dll` (P/Invoke
+    declarations and call edges; no code decompiled): the library declares
+    `DebugBreak` and calls it from a windowless rich-edit host
+    (`RichEdit.CTextHost`, `RichEdit.CRichEditOleCallback`) in the callbacks
+    it treats as "never called": `TxShowScrollBar`, `TxSetScrollRange`,
+    `TxSetScrollPos`, `TxActivate`, `TxDeactivate`, `TxGetPasswordChar`,
+    `TxGetAcceleratorPos`, `OnTxCharFormatChange`, `OnTxParaFormatChange`,
+    `TxImmGetContext`, `TxImmReleaseContext`, and three OLE callback methods.
+    So Windows' rich edit engine does not call these for that host, and
+    Wine's does call at least one.
+  - Wine's riched20 calls `ITextHost::OnTxParaFormatChange` whenever a text
+    services object is created and the host supplies a paragraph format; the
+    other candidates are conditional (scroll bars, password flag, IME).
+    `patches/wine/0015-riched20-no-para-format-callback-at-creation.patch`
+    drops that call. Not yet confirmed as the one that was hit.
