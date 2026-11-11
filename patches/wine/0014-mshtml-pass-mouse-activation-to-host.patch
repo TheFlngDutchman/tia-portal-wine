@@ -1,0 +1,21 @@
+diff --git i/dlls/mshtml/view.c w/dlls/mshtml/view.c
+index fe7448e..ba8ca72 100644
+--- i/dlls/mshtml/view.c
++++ w/dlls/mshtml/view.c
+@@ -199,9 +199,15 @@ static LRESULT WINAPI serverwnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
+         TRACE("(%p) WM_SETFOCUS\n", This);
+         nsIWebBrowserFocus_Activate(This->nscontainer->focus);
+         break;
+-    case WM_MOUSEACTIVATE:
++    case WM_MOUSEACTIVATE: {
++        /* Let the parent windows see it first: a host such as an MFC CHtmlView
++         * makes itself the active view on this message. */
++        LRESULT res = DefWindowProcW(hwnd, msg, wParam, lParam);
++        if(res == MA_NOACTIVATE || res == MA_NOACTIVATEANDEAT || res == MA_ACTIVATEANDEAT)
++            return res;
+         return MA_ACTIVATE;
+     }
++    }
+         
+     return DefWindowProcW(hwnd, msg, wParam, lParam);
+ }

@@ -407,3 +407,16 @@
   service's dependencies before the service. Result: the licence manager
   service reports running immediately instead of after 30 seconds to four
   minutes, and the class-object error is gone from its start-up.
+- User test: context menu on a key offers Cut, Delete, Transfer, Check and
+  Update, all enabled. In the main menu "License Key", Transfer, Check, Recover
+  and Upgrade stay greyed out whatever is selected in the list. The control's
+  events do arrive (traced), so the main menu is looking somewhere else.
+  - Cause: the program is an MFC application with two panes (drive tree,
+    browser view). Its menu asks the *active* pane. A pane becomes active when
+    it receives `WM_MOUSEACTIVATE`, which normally travels up from the clicked
+    window through all its parents. Wine's "Internet Explorer_Server" window
+    answered that message itself and did not pass it on, so the browser pane
+    never became active and the menu kept reflecting the drive tree.
+  - `patches/wine/0014-mshtml-pass-mouse-activation-to-host.patch` passes the
+    message to the parent windows first. A message trace now shows it reaching
+    the program's "HtmlView", the splitter and the frame window.
