@@ -1,0 +1,15 @@
+diff --git i/dlls/gdiplus/font.c w/dlls/gdiplus/font.c
+index a3b99af..24331ec 100644
+--- i/dlls/gdiplus/font.c
++++ w/dlls/gdiplus/font.c
+@@ -993,6 +993,10 @@ GpStatus WINGDIPAPI GdipIsStyleAvailable(GDIPCONST GpFontFamily* family,
+ 
+     *IsStyleAvailable = FALSE;
+ 
++    /* Underline and strikeout are drawn by GDI+ itself and need no matching
++     * font face, so they are available whenever the rest of the style is. */
++    style &= ~(FontStyleUnderline | FontStyleStrikeout);
++
+     hdc = CreateCompatibleDC(0);
+ 
+     if(!EnumFontFamiliesW(hdc, family->FamilyName, font_has_style_proc, (LPARAM)style))

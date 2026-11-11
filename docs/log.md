@@ -500,3 +500,19 @@
     other candidates are conditional (scroll bars, password flag, IME).
     `patches/wine/0015-riched20-no-para-format-callback-at-creation.patch`
     drops that call. Not yet confirmed as the one that was hit.
+- With patch 0015 the PLC security settings wizard can be completed (user
+  test), so `OnTxParaFormatChange` at creation was the call that hit the
+  breakpoint.
+- Adding an SCL function block: an endless "General font (0601:000037): The
+  selected 'Courier New' font is invalid. Select another font." message.
+  Courier New is installed and passes GDI, GDI+ and WPF look-ups. REA's
+  inspection of `GeneralFontSettings` in
+  `Siemens.Simatic.Lang.BlockEditorFrame.dll` shows the check: the family must
+  report *every* `FontStyle` value as available, including Underline and
+  Strikeout. Wine's `GdipIsStyleAvailable` only accepts styles for which a
+  matching font face exists, so it says no for those two; Windows says yes.
+  `patches/wine/0016-gdiplus-underline-and-strikeout-always-available.patch`
+  ignores those two bits. Test: `tests/font-styles`.
+- User observations still open: in the device selection dialog the mouse
+  focus keeps jumping; in several dialogs the OK / Next / Finish buttons are
+  not layered correctly.
