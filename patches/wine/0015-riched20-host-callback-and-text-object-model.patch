@@ -1,0 +1,408 @@
+diff --git i/dlls/riched20/editor.h w/dlls/riched20/editor.h
+index 1ad8f4a..ec316fc 100644
+--- i/dlls/riched20/editor.h
++++ w/dlls/riched20/editor.h
+@@ -209,6 +209,8 @@ void editor_get_selection_para_fmt( ME_TextEditor *editor, PARAFORMAT2 *fmt );
+ void editor_mark_rewrap_all( ME_TextEditor *editor );
+ void editor_set_default_para_fmt(ME_TextEditor *editor, PARAFORMAT2 *pFmt);
+ BOOL editor_set_selection_para_fmt( ME_TextEditor *editor, const PARAFORMAT2 *fmt );
++BOOL editor_set_range_para_fmt( ME_TextEditor *editor, int start, int end, const PARAFORMAT2 *fmt );
++void editor_get_range_para_fmt( ME_TextEditor *editor, int start, int end, PARAFORMAT2 *fmt );
+ void ME_MakeFirstParagraph(ME_TextEditor *editor, HDC hdc);
+ void ME_DumpParaStyle(ME_Paragraph *s);
+ void ME_DumpParaStyleToBuf(const PARAFORMAT2 *pFmt, char buf[2048]);
+diff --git i/dlls/riched20/para.c w/dlls/riched20/para.c
+index 89c4a72..8347f63 100644
+--- i/dlls/riched20/para.c
++++ w/dlls/riched20/para.c
+@@ -886,6 +886,37 @@ BOOL editor_set_selection_para_fmt( ME_TextEditor *editor, const PARAFORMAT2 *fm
+     return TRUE;
+ }
+ 
++static void editor_get_range_paras( ME_TextEditor *editor, int start, int end, ME_Paragraph **para, ME_Paragraph **para_end )
++{
++    ME_Cursor from, to;
++
++    cursor_from_char_ofs( editor, start, &from );
++    cursor_from_char_ofs( editor, end, &to );
++    *para = from.para;
++    *para_end = to.para;
++    /* as for a selection, a range ending at the start of a paragraph excludes it */
++    if (*para != *para_end && !to.run->nCharOfs && !to.nOffset) *para_end = para_prev( *para_end );
++}
++
++/* set the format of the paragraphs covered by a range of characters */
++BOOL editor_set_range_para_fmt( ME_TextEditor *editor, int start, int end, const PARAFORMAT2 *fmt )
++{
++    ME_Paragraph *para, *para_end;
++
++    editor_get_range_paras( editor, start, end, &para, &para_end );
++
++    do
++    {
++        para_set_fmt( editor, para, fmt );
++        if (para == para_end) break;
++        para = para_next( para );
++    } while(1);
++
++    ME_WrapMarkedParagraphs( editor );
++    ME_CommitUndo( editor );
++    return TRUE;
++}
++
+ static void para_copy_fmt( const ME_Paragraph *para, PARAFORMAT2 *fmt )
+ {
+     UINT size = fmt->cbSize;
+@@ -973,6 +1004,17 @@ void editor_set_default_para_fmt( ME_TextEditor *editor, PARAFORMAT2 *pFmt )
+         /* Just use the alignment for now */
+         if (host_fmt->dwMask & PFM_ALIGNMENT)
+             pFmt->wAlignment = host_fmt->wAlignment;
+-        ITextHost_OnTxParaFormatChange( editor->texthost, (PARAFORMAT *)pFmt );
++        /* The host is not told about this: it supplied the format itself, and
++         * hosts exist that treat OnTxParaFormatChange as "never called". */
+     }
+ }
++
++/* get the format of the first paragraph covered by a range of characters */
++void editor_get_range_para_fmt( ME_TextEditor *editor, int start, int end, PARAFORMAT2 *fmt )
++{
++    ME_Paragraph *para, *para_end;
++
++    editor_get_range_paras( editor, start, end, &para, &para_end );
++    fmt->cbSize = sizeof(*fmt);
++    para_copy_fmt( para, fmt );
++}
+diff --git i/dlls/riched20/richole.c w/dlls/riched20/richole.c
+index 856f158..4145ed8 100644
+--- i/dlls/riched20/richole.c
++++ w/dlls/riched20/richole.c
+@@ -2608,13 +2608,34 @@ static HRESULT WINAPI ITextRange_fnChangeCase(ITextRange *me, LONG type)
+ static HRESULT WINAPI ITextRange_fnGetPoint(ITextRange *me, LONG type, LONG *cx, LONG *cy)
+ {
+     ITextRangeImpl *This = impl_from_ITextRange(me);
++    ME_TextEditor *editor;
++    ME_Cursor cursor;
++    int x, y, height;
++    POINT pt;
+ 
+-    FIXME("(%p)->(%ld %p %p): stub\n", This, type, cx, cy);
++    TRACE("(%p)->(%#lx %p %p)\n", This, type, cx, cy);
+ 
+     if (!This->child.reole)
+         return CO_E_RELEASED;
++    if (!cx || !cy)
++        return E_INVALIDARG;
+ 
+-    return E_NOTIMPL;
++    editor = This->child.reole->editor;
++    cursor_from_char_ofs( editor, (type & tomStart) ? This->start : This->end, &cursor );
++    cursor_coords( editor, &cursor, &x, &y, &height );
++
++    /* vertical position: TA_TOP (0), TA_BOTTOM (8) or TA_BASELINE (24) */
++    pt.x = x;
++    pt.y = y;
++    if ((type & TA_BASELINE) == TA_BASELINE) pt.y += cursor.run->nAscent;
++    else if (type & TA_BOTTOM) pt.y += height;
++
++    if (!(type & tomClientCoord))
++        ITextHost_TxClientToScreen( editor->texthost, &pt );
++
++    *cx = pt.x;
++    *cy = pt.y;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI ITextRange_fnSetPoint(ITextRange *me, LONG x, LONG y, LONG type,
+@@ -3674,19 +3695,78 @@ static HRESULT WINAPI TextPara_SetStyle(ITextPara *iface, LONG value)
+     return E_NOTIMPL;
+ }
+ 
++/* paragraph format of the range a paragraph object is attached to */
++static HRESULT textpara_get_fmt(ITextParaImpl *para, PARAFORMAT2 *fmt)
++{
++    const struct text_services *services;
++    LONG start, end;
++
++    if (!para->range || !(services = get_range_reole(para->range)))
++        return CO_E_RELEASED;
++
++    ITextRange_GetStart(para->range, &start);
++    ITextRange_GetEnd(para->range, &end);
++    memset(fmt, 0, sizeof(*fmt));
++    fmt->cbSize = sizeof(*fmt);
++    editor_get_range_para_fmt(services->editor, start, end, fmt);
++    return S_OK;
++}
++
++static HRESULT textpara_set_fmt(ITextParaImpl *para, PARAFORMAT2 *fmt)
++{
++    const struct text_services *services;
++    LONG start, end;
++
++    if (!para->range || !(services = get_range_reole(para->range)))
++        return CO_E_RELEASED;
++
++    ITextRange_GetStart(para->range, &start);
++    ITextRange_GetEnd(para->range, &end);
++    fmt->cbSize = sizeof(*fmt);
++    editor_set_range_para_fmt(services->editor, start, end, fmt);
++    return S_OK;
++}
++
++#define TWIPS_PER_POINT 20
++
+ static HRESULT WINAPI TextPara_GetAlignment(ITextPara *iface, LONG *value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%p)\n", This, value);
+-    if (value) *value = 0;
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt;
++    HRESULT hr;
++
++    TRACE("(%p)->(%p)\n", This, value);
++
++    if (!value) return E_INVALIDARG;
++    if (FAILED(hr = textpara_get_fmt(This, &fmt))) return hr;
++
++    switch (fmt.wAlignment)
++    {
++    case PFA_RIGHT:   *value = tomAlignRight; break;
++    case PFA_CENTER:  *value = tomAlignCenter; break;
++    case PFA_JUSTIFY: *value = tomAlignJustify; break;
++    default:          *value = tomAlignLeft; break;
++    }
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI TextPara_SetAlignment(ITextPara *iface, LONG value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%ld)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt = {0};
++
++    TRACE("(%p)->(%ld)\n", This, value);
++
++    switch (value)
++    {
++    case tomAlignLeft:    fmt.wAlignment = PFA_LEFT; break;
++    case tomAlignRight:   fmt.wAlignment = PFA_RIGHT; break;
++    case tomAlignCenter:  fmt.wAlignment = PFA_CENTER; break;
++    case tomAlignJustify: fmt.wAlignment = PFA_JUSTIFY; break;
++    default: return E_INVALIDARG;
++    }
++    fmt.dwMask = PFM_ALIGNMENT;
++    return textpara_set_fmt(This, &fmt);
+ }
+ 
+ static HRESULT WINAPI TextPara_GetHyphenation(ITextPara *iface, LONG *value)
+@@ -3706,8 +3786,15 @@ static HRESULT WINAPI TextPara_SetHyphenation(ITextPara *iface, LONG value)
+ static HRESULT WINAPI TextPara_GetFirstLineIndent(ITextPara *iface, FLOAT *value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%p)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt;
++    HRESULT hr;
++
++    TRACE("(%p)->(%p)\n", This, value);
++
++    if (!value) return E_INVALIDARG;
++    if (FAILED(hr = textpara_get_fmt(This, &fmt))) return hr;
++    *value = -(FLOAT)fmt.dxOffset / TWIPS_PER_POINT;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI TextPara_GetKeepTogether(ITextPara *iface, LONG *value)
+@@ -3741,8 +3828,15 @@ static HRESULT WINAPI TextPara_SetKeepWithNext(ITextPara *iface, LONG value)
+ static HRESULT WINAPI TextPara_GetLeftIndent(ITextPara *iface, FLOAT *value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%p)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt;
++    HRESULT hr;
++
++    TRACE("(%p)->(%p)\n", This, value);
++
++    if (!value) return E_INVALIDARG;
++    if (FAILED(hr = textpara_get_fmt(This, &fmt))) return hr;
++    *value = (FLOAT)(fmt.dxStartIndent + fmt.dxOffset) / TWIPS_PER_POINT;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI TextPara_GetLineSpacing(ITextPara *iface, FLOAT *value)
+@@ -3790,15 +3884,27 @@ static HRESULT WINAPI TextPara_SetListLevelIndex(ITextPara *iface, LONG value)
+ static HRESULT WINAPI TextPara_GetListStart(ITextPara *iface, LONG *value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%p)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt;
++    HRESULT hr;
++
++    TRACE("(%p)->(%p)\n", This, value);
++
++    if (!value) return E_INVALIDARG;
++    if (FAILED(hr = textpara_get_fmt(This, &fmt))) return hr;
++    *value = fmt.wNumberingStart;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI TextPara_SetListStart(ITextPara *iface, LONG value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%ld)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt = {0};
++
++    TRACE("(%p)->(%ld)\n", This, value);
++
++    fmt.dwMask = PFM_NUMBERINGSTART;
++    fmt.wNumberingStart = value;
++    return textpara_set_fmt(This, &fmt);
+ }
+ 
+ static HRESULT WINAPI TextPara_GetListTab(ITextPara *iface, FLOAT *value)
+@@ -3818,15 +3924,28 @@ static HRESULT WINAPI TextPara_SetListTab(ITextPara *iface, FLOAT value)
+ static HRESULT WINAPI TextPara_GetListType(ITextPara *iface, LONG *value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%p)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt;
++    HRESULT hr;
++
++    TRACE("(%p)->(%p)\n", This, value);
++
++    if (!value) return E_INVALIDARG;
++    if (FAILED(hr = textpara_get_fmt(This, &fmt))) return hr;
++    /* PFN_* and tomList* use the same numbers */
++    *value = fmt.wNumbering;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI TextPara_SetListType(ITextPara *iface, LONG value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%ld)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt = {0};
++
++    TRACE("(%p)->(%ld)\n", This, value);
++
++    fmt.dwMask = PFM_NUMBERING;
++    fmt.wNumbering = LOWORD(value);
++    return textpara_set_fmt(This, &fmt);
+ }
+ 
+ static HRESULT WINAPI TextPara_GetNoLineNumber(ITextPara *iface, LONG *value)
+@@ -3860,22 +3979,43 @@ static HRESULT WINAPI TextPara_SetPageBreakBefore(ITextPara *iface, LONG value)
+ static HRESULT WINAPI TextPara_GetRightIndent(ITextPara *iface, FLOAT *value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%p)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt;
++    HRESULT hr;
++
++    TRACE("(%p)->(%p)\n", This, value);
++
++    if (!value) return E_INVALIDARG;
++    if (FAILED(hr = textpara_get_fmt(This, &fmt))) return hr;
++    *value = (FLOAT)fmt.dxRightIndent / TWIPS_PER_POINT;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI TextPara_SetRightIndent(ITextPara *iface, FLOAT value)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%.2f)\n", This, value);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt = {0};
++
++    TRACE("(%p)->(%.2f)\n", This, value);
++
++    fmt.dwMask = PFM_RIGHTINDENT;
++    fmt.dxRightIndent = value * TWIPS_PER_POINT;
++    return textpara_set_fmt(This, &fmt);
+ }
+ 
+ static HRESULT WINAPI TextPara_SetIndents(ITextPara *iface, FLOAT StartIndent, FLOAT LeftIndent, FLOAT RightIndent)
+ {
+     ITextParaImpl *This = impl_from_ITextPara(iface);
+-    FIXME("(%p)->(%.2f %.2f %.2f)\n", This, StartIndent, LeftIndent, RightIndent);
+-    return E_NOTIMPL;
++    PARAFORMAT2 fmt = {0};
++
++    TRACE("(%p)->(%.2f %.2f %.2f)\n", This, StartIndent, LeftIndent, RightIndent);
++
++    /* TOM: StartIndent is the first line relative to the left indent;
++     * PARAFORMAT: dxStartIndent is the first line, dxOffset the other lines relative to it. */
++    fmt.dwMask = PFM_STARTINDENT | PFM_OFFSET | PFM_RIGHTINDENT;
++    fmt.dxStartIndent = (LeftIndent + StartIndent) * TWIPS_PER_POINT;
++    fmt.dxOffset = -StartIndent * TWIPS_PER_POINT;
++    fmt.dxRightIndent = RightIndent * TWIPS_PER_POINT;
++    return textpara_set_fmt(This, &fmt);
+ }
+ 
+ static HRESULT WINAPI TextPara_SetLineSpacing(ITextPara *iface, LONG LineSpacingRule, FLOAT LineSpacing)
+@@ -4336,8 +4476,20 @@ static HRESULT WINAPI ITextDocument2Old_fnRangeFromPoint(ITextDocument2Old *ifac
+                                                          ITextRange **ppRange)
+ {
+     struct text_services *services = impl_from_ITextDocument2Old(iface);
+-    FIXME("stub %p\n", services);
+-    return E_NOTIMPL;
++    ME_Cursor cursor;
++    POINT pt = { x, y };
++    LONG cp;
++
++    TRACE("(%p)->(%ld %ld %p)\n", services, x, y, ppRange);
++
++    if (!ppRange)
++        return E_INVALIDARG;
++
++    /* the point is in screen coordinates */
++    ITextHost_TxScreenToClient( services->editor->texthost, &pt );
++    cursor_from_coords( services->editor, pt.x, pt.y, &cursor );
++    cp = ME_GetCursorOfs( &cursor );
++    return CreateITextRange( services, cp, cp, ppRange );
+ }
+ 
+ /* ITextDocument2Old methods */
+@@ -5489,12 +5641,15 @@ static HRESULT WINAPI ITextSelection_fnGetFlags(ITextSelection *me, LONG *flags)
+ {
+     struct text_selection *This = impl_from_ITextSelection(me);
+ 
+-    FIXME("(%p)->(%p): stub\n", This, flags);
++    TRACE("(%p)->(%p)\n", This, flags);
+ 
+     if (!This->services)
+         return CO_E_RELEASED;
++    if (!flags)
++        return E_INVALIDARG;
+ 
+-    return E_NOTIMPL;
++    *flags = tomSelActive;
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI ITextSelection_fnSetFlags(ITextSelection *me, LONG flags)
+@@ -5603,12 +5758,14 @@ static HRESULT WINAPI ITextSelection_fnTypeText(ITextSelection *me, BSTR text)
+ {
+     struct text_selection *This = impl_from_ITextSelection(me);
+ 
+-    FIXME("(%p)->(%s): stub\n", This, debugstr_w(text));
++    TRACE("(%p)->(%s)\n", This, debugstr_w(text));
+ 
+     if (!This->services)
+         return CO_E_RELEASED;
+ 
+-    return E_NOTIMPL;
++    /* replaces the selection and leaves the insertion point after the text */
++    ME_ReplaceSel(This->services->editor, TRUE, text, text ? lstrlenW(text) : 0);
++    return S_OK;
+ }
+ 
+ static const ITextSelectionVtbl tsvt = {

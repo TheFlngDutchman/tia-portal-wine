@@ -516,3 +516,19 @@
 - User observations still open: in the device selection dialog the mouse
   focus keeps jumping; in several dialogs the OK / Next / Finish buttons are
   not layered correctly.
+- With patch 0016 the SCL editor opens (user test). Inserting a call that
+  needs an instance opens the call options dialog, and Portal crashes when a
+  formatted tooltip is built: `NotImplementedException` from
+  `ITextPara::SetListType`. Wine's rich edit has the whole `ITextPara`
+  interface as stubs.
+  - REA's call-edge listing for Portal's tooltip code
+    (`TextModelAdapter`, `FOMParser`, `FormattedTextWindowlessSupport`) gives
+    the Text Object Model methods it uses. Against Wine's `richole.c`, these
+    were unimplemented: `ITextPara` alignment, indents, list type and list
+    start (get and set), `ITextRange::GetPoint`, `ITextRange::Paste`,
+    `ITextRange::FindText`, `ITextDocument::RangeFromPoint`,
+    `ITextSelection::TypeText` and `GetFlags`.
+  - Patch 0015 (renamed `0015-riched20-host-callback-and-text-object-model.patch`)
+    now implements all of those except `Paste` and `FindText`, on top of the
+    editor's paragraph format code. Test: `tests/richedit-tom/tom_para.c`,
+    15 checks, all pass.
