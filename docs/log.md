@@ -433,3 +433,19 @@
     flags, so Windows would not see them. Keys written under Wine should
     therefore not be assumed valid on Windows. Possible fix: write
     `system.ntfs_attrib` on NTFS volumes.
+- Portal with the upgraded keys on the licence volume (user test): the
+  "No valid License Key" dialog still appeared. The user activated the STEP 7
+  Professional trial licence from that dialog (a trial key file appeared in
+  `C:\AX NF ZZ`), could then pick a PLC, and Portal crashed. The licence
+  manager afterwards reported a licence as corrupt (which one: to be checked).
+  - The crash is unrelated to licensing: `CultureNotFoundException: jp is an
+    invalid culture identifier`, thrown while the hardware configuration
+    initialises its web-server language list. "jp" is not a real locale name
+    (Japanese is "ja"); Windows 10 accepts any well-formed name as a custom
+    culture, Wine 11.20 rejects unknown names. Patch 0005 (renamed
+    `0005-kernelbase-locale-ids-and-custom-locale-names.patch`) now also makes
+    `GetLocaleInfoEx` accept such names: the locale keeps its name and
+    otherwise uses the invariant locale's data. Test:
+    `tests/culture-lcid/CultureName.cs`.
+  - Open: why Portal does not use the V21 keys the licence manager lists, and
+    why a key is reported as corrupt.

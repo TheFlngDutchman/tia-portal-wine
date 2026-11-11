@@ -1,0 +1,75 @@
+diff --git i/dlls/kernelbase/locale.c w/dlls/kernelbase/locale.c
+index 798e4be..5a4c1bf 100644
+--- i/dlls/kernelbase/locale.c
++++ w/dlls/kernelbase/locale.c
+@@ -6109,6 +6109,24 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoW( LCID lcid, LCTYPE lctype, WCHAR *bu
+ }
+ 
+ 
++/* a language tag of two or three letters, optionally followed by subtags */
++static BOOL is_wellformed_locale_name( const WCHAR *name )
++{
++    unsigned int i, letters = 0;
++
++    if (!name || name == LOCALE_NAME_USER_DEFAULT) return FALSE;
++    while ((name[letters] >= 'a' && name[letters] <= 'z') || (name[letters] >= 'A' && name[letters] <= 'Z')) letters++;
++    if (letters < 2 || letters > 3) return FALSE;
++    for (i = letters; name[i]; i++)
++    {
++        WCHAR c = name[i];
++        if (i >= LOCALE_NAME_MAX_LENGTH - 1) return FALSE;
++        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) return FALSE;
++    }
++    return !name[letters] || name[letters] == '-';
++}
++
++
+ /******************************************************************************
+  *	GetLocaleInfoEx   (kernelbase.@)
+  */
+@@ -6119,6 +6137,26 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoEx( const WCHAR *name, LCTYPE info, WC
+ 
+     TRACE( "%s 0x%lx %p %d\n", debugstr_w(name), info, buffer, len );
+ 
++    /* Since Windows 10 any well-formed name is accepted as a custom locale:
++     * it keeps its own name and otherwise behaves like the invariant locale. */
++    if (!locale && is_wellformed_locale_name( name ))
++    {
++        if ((info & 0xffff) == LOCALE_SNAME)
++        {
++            INT needed = lstrlenW( name ) + 1;
++
++            if (!len) return needed;
++            if (!buffer || len < needed)
++            {
++                SetLastError( ERROR_INSUFFICIENT_BUFFER );
++                return 0;
++            }
++            memcpy( buffer, name, needed * sizeof(WCHAR) );
++            return needed;
++        }
++        if ((locale = get_locale_by_name( L"", &lcid ))) lcid = LOCALE_CUSTOM_UNSPECIFIED;
++    }
++
+     if (!locale)
+     {
+         SetLastError( ERROR_INVALID_PARAMETER );
+@@ -6899,6 +6937,18 @@ INT WINAPI DECLSPEC_HOTPATCH LCIDToLocaleName( LCID lcid, WCHAR *name, INT count
+ {
+     const NLS_LOCALE_DATA *locale = NlsValidateLocale( &lcid, flags );
+ 
++    if (!locale)
++    {
++        /* Windows still knows the locales of the former Serbia and Montenegro;
++         * Wine's locale data only has their successors. */
++        switch (lcid)
++        {
++        case 0x081a: lcid = 0x241a; break;  /* sr-Latn-CS -> sr-Latn-RS */
++        case 0x0c1a: lcid = 0x281a; break;  /* sr-Cyrl-CS -> sr-Cyrl-RS */
++        default: lcid = 0; break;
++        }
++        if (lcid) locale = NlsValidateLocale( &lcid, flags );
++    }
+     if (!locale)
+     {
+         SetLastError( ERROR_INVALID_PARAMETER );
